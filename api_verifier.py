@@ -1,10 +1,11 @@
 import requests
-import time
+
+from config import ERNIE_API_KEY
 
 # 保持原有的配置结构
 ERNIE_CONFIG = {
     "base_url": "https://qianfan.baidubce.com/v2",
-    "api_key": "bce-v3/ALTAK-Etj0lvrkCl7MGkkOTCeWr/805ca0828876600fd02683d34e348b2ed59f7a74",
+    "api_key": ERNIE_API_KEY,
     "model": "ernie-3.5-8k" 
 }
 
