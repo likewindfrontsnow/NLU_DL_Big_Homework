@@ -3,7 +3,7 @@ import subprocess
 import os
 import math
 import concurrent.futures
-from utils import retry # <-- Import the retry decorator
+from utils import retry 
 
 def get_media_duration(media_path: str) -> float | None:
     """使用 ffprobe 获取媒体文件总时长（秒），适用于视频和音频。"""
@@ -21,7 +21,7 @@ def get_media_duration(media_path: str) -> float | None:
         print(f"获取媒体时长时发生错误: {e}")
         return None
 
-@retry(max_retries=3, delay=2, allowed_exceptions=(subprocess.CalledProcessError,)) # <-- Apply retry decorator
+@retry(max_retries=3, delay=2, allowed_exceptions=(subprocess.CalledProcessError,)) 
 def _process_chunk(args) -> str | None:
     """(工作函数) 处理单个音频块的生成。"""
     media_path, output_dir, chunk_duration, i, num_chunks = args
