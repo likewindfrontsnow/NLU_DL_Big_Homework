@@ -9,7 +9,8 @@ from video_processor.splitter import split_media_to_audio_chunks_generator
 from video_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model
 from llm_api import run_llm_generation 
 
-def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str, whisper_model_size: str): 
+# --- (修改) 函数签名，增加 stream_output: bool ---
+def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str, whisper_model_size: str, stream_output: bool): 
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
     """
@@ -25,23 +26,39 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
     current_progress = 0
     full_transcript = ""
 
+    # --- (修改) 重写此辅助函数以处理流式/非流式 ---
     def run_llm_and_yield_results():
-        """辅助生成器：运行 LLM 并处理结果。"""
+        """辅助生成器：运行 LLM 并处理结果（支持流式和非流式）。"""
+        
+        final_text = "" # 用于累积最终结果以供保存
         
         try:
             provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             model_name = LLM_CONFIG.get('model', 'default')
-            yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name})..."
+            stream_status = "流式" if stream_output else "非流式"
+            yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status})..."
             
-            final_text = run_llm_generation(full_transcript, query)
+            # (修改) 调用更新后的 llm_api 函数
+            llm_call_result = run_llm_generation(full_transcript, query, stream_output)
+            
+            if stream_output:
+                # 模式一：流式。llm_call_result 是一个生成器
+                for chunk in llm_call_result:
+                    if chunk:
+                        final_text += chunk
+                        yield "llm_chunk", chunk
+            else:
+                # 模式二：非流式。llm_call_result 是一个字符串
+                final_text = llm_call_result
+                if final_text:
+                    # 仍然作为 "llm_chunk" 产出，以便 app.py 统一处理
+                    yield "llm_chunk", final_text 
             
             if not final_text:
                 yield "persistent_error", 0, "**笔记生成失败**\n\nAPI 在多次尝试后，未返回任何有效内容。请检查您的 API 配置以及输入文本是否过长或格式异常。"
                 return
 
-            # --- 模拟流式输出 ---
-            yield "llm_chunk", final_text
-            
+            # --- 仅在所有内容生成后保存 ---
             try:
                 with open(final_notes_save_path, 'w', encoding='utf-8') as f:
                     f.write(final_text)
@@ -59,6 +76,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             user_friendly_error = f"**笔记生成失败**\n\n看起来在与 {provider_name} API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
             return
+    # --- 结束修改 ---
 
 
     # === 文本文件工作流 ===
@@ -78,6 +96,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {provider_name}..."
         
         final_path = None
+        # (修改) 此处调用已更新的 run_llm_and_yield_results
         llm_gen = run_llm_and_yield_results()
         for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":
@@ -195,6 +214,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {provider_name}..."
 
         final_path = None
+        # (修改) 此处调用已更新的 run_llm_and_yield_results
         llm_gen = run_llm_and_yield_results()
         for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":

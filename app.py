@@ -34,6 +34,14 @@ with st.sidebar:
         help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用非 'tiny' 模型时，程序会先下载模型文件（可能需要几分钟）。"
     )
 
+    # --- (新增) 添加流式输出开关 ---
+    stream_output = st.toggle(
+        "启用流式输出", 
+        value=True, 
+        help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。"
+    )
+    # --- 结束新增 ---
+
     st.markdown("---")
     keep_temp_files = st.checkbox(
         "保留中间文件", 
@@ -73,15 +81,16 @@ if uploaded_file is not None:
 
         st.markdown("---")
 
+        # --- (修改) 动态显示流式状态 ---
+        stream_status = "流式" if stream_output else "非流式"
         processing_headers = {
-            # (修改) 动态显示 LLM 服务商名称
-            "Notes": f"正在生成笔记 ({provider_name} 非流式)...",
+            "Notes": f"正在生成笔记 ({provider_name} {stream_status})...",
             "Q&A": "正在进行 Q&A...",
             "Quiz": "正在生成测验..."
         }
         st.subheader(processing_headers.get(query_option, "正在处理..."))
-        # (修改) 同时显示转录模型
         st.info(f"当前生成模式: **{query_option}** (转录模型: **{whisper_model_size}**)")
+        # --- 结束修改 ---
         
         classification_display = st.empty() # (保留占位，但不再使用)
         llm_output_container = st.empty()
@@ -97,13 +106,14 @@ if uploaded_file is not None:
         with open(temp_file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        # (修改) 将 whisper_model_size 传递给主进程
+        # (修改) 将 whisper_model_size 和 stream_output 传递给主进程
         generator = main_process_generator(
             temp_file_path, 
             "DUMMY_KEY", 
             output_filename, 
             query_option, 
-            whisper_model_size # <-- 新增参数
+            whisper_model_size,
+            stream_output # <-- 新增参数
         )
         
         for event_type, value, *rest in generator:
@@ -119,9 +129,9 @@ if uploaded_file is not None:
             # --- (移除) 不再处理 'display_classification' 事件 ---
 
             elif event_type == "llm_chunk":
-                # 因为是非流式，value 将是完整的笔记内容
+                # (修改) 此循环现在可以正确处理流式（多个小块）和非流式（一个大块）
                 full_llm_response += value
-                llm_output_container.markdown(full_llm_response) # 直接显示完整内容
+                llm_output_container.markdown(full_llm_response) # 实时更新
             
             elif event_type == "persistent_error":
                 st.error(f"处理失败: {text}")
