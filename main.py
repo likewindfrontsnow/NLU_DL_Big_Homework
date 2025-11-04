@@ -4,15 +4,17 @@ import time
 import os
 import sys
 import shutil
-from config import ERNIE_CONFIG
+# (修改) 导入新的通用配置
+from config import LLM_CONFIG
 from video_processor.splitter import split_media_to_audio_chunks_generator
 from video_processor.transcriber import transcribe_single_audio_chunk
-from llm_api import run_ernie_generation # <-- 替换为新的 LLM API
+# (修改) 导入新的通用 LLM API 函数
+from llm_api import run_llm_generation 
 
 def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str):
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
-    - (已修改) 移除 Dify 依赖，转而调用 llm_api.py
+    - (已修改) 移除 Dify 依赖，转而调用通用的 llm_api.py
     """
     # (注意: dify_api_key 参数现在已未使用，但为了保持 app.py 调用不变，暂且保留)
     
@@ -29,24 +31,25 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
 
     # --- (重构) 移除了 Dify 依赖的辅助函数 ---
     def run_llm_and_yield_results():
-        """辅助生成器：运行 ERNIE LLM 并处理结果。"""
+        """辅助生成器：运行 LLM 并处理结果。"""
         
         try:
-            yield "progress_text", f"正在提交给 ERNIE (模型: {ERNIE_CONFIG.get('model', 'default')})..."
+            # (修改) 动态显示 LLM 服务商和模型
+            provider_name = LLM_CONFIG.get('provider_name', 'LLM')
+            model_name = LLM_CONFIG.get('model', 'default')
+            yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name})..."
             
-            # --- 核心调用 ---
+            # --- 核心调用 (修改) ---
             # 这现在是一个阻塞调用，会等待 LLM 完整响应
-            final_text = run_ernie_generation(full_transcript, query)
+            final_text = run_llm_generation(full_transcript, query) # <-- (修改)
             
             if not final_text:
-                yield "persistent_error", 0, "**笔记生成失败**\n\nERNIE API 在多次尝试后，未返回任何有效内容。请检查您的 API 配置以及输入文本是否过长或格式异常。"
+                # (修改) 通用错误信息
+                yield "persistent_error", 0, "**笔记生成失败**\n\nAPI 在多次尝试后，未返回任何有效内容。请检查您的 API 配置以及输入文本是否过长或格式异常。"
                 return
 
             # --- 模拟流式输出 ---
-            # 为了让 UI 能够显示结果，我们一次性将完整结果作为 "llm_chunk" 发送
             yield "llm_chunk", final_text
-            
-            # (移除了 Dify 特有的安全审查和回退分支逻辑)
             
             # --- 保存文件 (逻辑保留) ---
             try:
@@ -62,7 +65,9 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             yield "persistent_error", 0, str(e)
             return
         except Exception as e: # 捕获 API 调用失败 (重试后)
-            user_friendly_error = f"**笔记生成失败**\n\n看起来在与 ERNIE API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
+            # (修改) 动态显示错误源
+            provider_name = LLM_CONFIG.get('provider_name', 'LLM')
+            user_friendly_error = f"**笔记生成失败**\n\n看起来在与 {provider_name} API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
             return
 
@@ -79,12 +84,10 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             yield "persistent_error", 0, user_friendly_error
             return
         
-        if not full_transcript or full_transcript.strip() == "":
-            yield "persistent_error", 0, "**输入内容为空**\n\n您上传的文本文档为空或只包含空白字符，无法生成笔记。"
-            return
-        
         current_progress += 1
-        yield "progress", current_progress / total_steps, "步骤 2/2: 正在提交给 ERNIE 工作流..."
+        # (修改) 动态显示提交目标
+        provider_name = LLM_CONFIG.get('provider_name', 'LLM')
+        yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {provider_name}..."
         
         final_path = None
         # --- (修改) 使用新的辅助函数 ---
@@ -93,9 +96,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             if event_type == "persistent_error":
                 yield event_type, value, rest[0]
                 return
-            # (移除) 不再有 "display_classification" 事件
-            # elif event_type == "display_classification":
-            #     yield event_type, value
             elif event_type == "llm_chunk":
                 yield event_type, value
             elif event_type == "progress_text":
@@ -181,10 +181,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         
         full_transcript = "\n\n".join(filter(None, all_transcripts))
         
-        if not full_transcript or full_transcript.strip() == "":
-            yield "persistent_error", 0, "**转录结果为空**\n\n未能从您的媒体文件中转录出任何有效文本（可能文件为静音或已损坏），无法生成笔记。"
-            return
-
         transcript_save_path = "source_transcript.txt"
         try:
             with open(transcript_save_path, 'w', encoding='utf-8') as f:
@@ -196,7 +192,9 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             current_progress += 1
             yield "progress", current_progress / total_steps, "文字稿汇总完成。"
             
-        yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 ERNIE 工作流..."
+        # (修改) 动态显示提交目标
+        provider_name = LLM_CONFIG.get('provider_name', 'LLM')
+        yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {provider_name}..."
 
         final_path = None
         # --- (修改) 使用新的辅助函数 ---
@@ -205,9 +203,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             if event_type == "persistent_error":
                 yield event_type, value, rest[0]
                 return
-            # (移除) 不再有 "display_classification" 事件
-            # elif event_type == "display_classification":
-            #     yield event_type, value
             elif event_type == "llm_chunk":
                 yield event_type, value
             elif event_type == "progress_text":

@@ -5,13 +5,24 @@ from dotenv import load_dotenv
 # 加载 .env 文件中的环境变量
 load_dotenv(override=True)
 
-ERNIE_API_KEY = os.getenv("ERNIE_API_KEY")
+# 1. 从 .env 加载所有通用变量
+LLM_PROVIDER_NAME = os.getenv("LLM_PROVIDER_NAME", "LLM")
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL")
+LLM_MODEL = os.getenv("LLM_MODEL")
 
-ERNIE_CONFIG = {
-    "base_url": "https://qianfan.baidubce.com/v2",
-    "api_key": ERNIE_API_KEY,
-    "model": "ernie-3.5-8k" 
+# 2. 检查关键变量是否存在
+if not LLM_API_KEY:
+    raise ValueError("错误：请在 .env 文件中设置您的 LLM_API_KEY")
+if not LLM_BASE_URL:
+    raise ValueError("错误：请在 .env 文件中设置您的 LLM_BASE_URL")
+if not LLM_MODEL:
+    raise ValueError("错误：请在 .env 文件中设置您的 LLM_MODEL")
+
+# 3. 创建一个通用的 LLM 配置字典
+LLM_CONFIG = {
+    "provider_name": LLM_PROVIDER_NAME,
+    "base_url": LLM_BASE_URL,
+    "api_key": LLM_API_KEY,
+    "model": LLM_MODEL
 }
-
-if not ERNIE_API_KEY:
-    raise ValueError("错误：请在 .env 文件中设置您的 ERNIE_API_KEY")
