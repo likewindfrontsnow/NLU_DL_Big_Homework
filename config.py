@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 ERNIE_API_KEY = os.getenv("ERNIE_API_KEY")
-DIFY_API_KEY = os.getenv("DIFY_API_KEY")
 
 
 if not ERNIE_API_KEY:
