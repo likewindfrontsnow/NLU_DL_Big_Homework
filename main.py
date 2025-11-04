@@ -4,16 +4,15 @@ import time
 import os
 import sys
 import shutil
-from openai import AuthenticationError
 from video_processor.splitter import split_media_to_audio_chunks_generator
 from video_processor.transcriber import transcribe_single_audio_chunk
 from dify_api import run_workflow_streaming
 
-def main_process_generator(input_path: str, openai_api_key: str, dify_api_key: str, output_filename: str, query: str):
+def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str):
     """
-    (更新版) 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
+    - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
     - 新增了对持久性错误的捕护和处理，并提供对用户友好的错误日志。
-    - (已修改) 适配包含安全审查的新版 Dify 工作流。
+    - 适配包含安全审查的新版 Dify 工作流。
     """
     output_dir = "output_chunks"
     final_notes_save_path = f"{output_filename}.md"
@@ -26,8 +25,6 @@ def main_process_generator(input_path: str, openai_api_key: str, dify_api_key: s
     current_progress = 0
     full_transcript = ""
 
-    # --- START of MODIFICATION ---
-    # (已重写) 重写此辅助函数以处理新的安全审查逻辑和更复杂的工作流分支
     def run_dify_and_yield_results():
         """辅助生成器：运行Dify工作流并处理事件（已适配安全审查流程）。"""
         final_llm_output_chunks = []
@@ -112,8 +109,6 @@ def main_process_generator(input_path: str, openai_api_key: str, dify_api_key: s
             yield "persistent_error", 0, user_friendly_error
             return
 
-    # --- END of MODIFICATION ---
-
 
     # === 文本文件工作流 ===
     if file_ext in text_exts:
@@ -189,26 +184,23 @@ def main_process_generator(input_path: str, openai_api_key: str, dify_api_key: s
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                 future_to_index = {
-                    executor.submit(transcribe_single_audio_chunk, chunk, openai_api_key): i
+                    executor.submit(transcribe_single_audio_chunk, chunk): i
                     for i, chunk in enumerate(audio_chunks)
                 }
+                
                 for future in concurrent.futures.as_completed(future_to_index):
                     index = future_to_index[future]
                     result = future.result() 
                     if result is not None:
                         all_transcripts[index] = result
                     else:
-                        raise Exception(f"转录任务未返回有效文本 (块索引: {index})。")
+                        raise Exception(f"本地转录任务未返回有效文本 (块索引: {index})。请检查 Whisper 模型是否正确加载。")
                     
                     num_transcribed += 1
                     yield "sub_progress", num_transcribed / len(audio_chunks), f"正在转录... ({num_transcribed}/{len(audio_chunks)})"
 
-        except AuthenticationError as e:
-             user_friendly_error = f"**OpenAI API 认证失败**\n\n您的 OpenAI API Key 无效。请在左侧边栏重新输入正确的密钥。\n\n**常见原因:**\n- 密钥拼写错误。\n- 密钥已过期或被禁用。\n- 账户余额不足。\n\n**原始错误信息:**\n`{e}`"
-             yield "persistent_error", 0, user_friendly_error
-             return
         except Exception as e:
-            user_friendly_error = f"**音频转录失败**\n\n在连接 OpenAI Whisper 服务进行语音转文字时发生无法恢复的错误。\n\n**可能原因:**\n1. **OpenAI 服务中断**: 可前往其官网查看服务状态。\n2. **网络连接问题**: 您的服务器可能无法访问 OpenAI API。\n3. **音频数据问题**: 某个音频块可能已损坏无法处理。\n\n**原始错误信息:**\n`{e}`"
+            user_friendly_error = f"**音频转录失败**\n\n在本地使用 Whisper 进行语音转文字时发生无法恢复的错误。\n\n**可能原因:**\n1. **Whisper 模型加载失败**: 确保 `tiny` 模型文件可访问。\n2. **依赖库问题**: 确保 `openai-whisper` 及其依赖（如 PyTorch）已正确安装。\n3. **音频数据问题**: 某个音频块可能已损坏无法处理。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
             return
         
