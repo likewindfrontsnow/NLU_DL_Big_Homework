@@ -4,14 +4,13 @@ import time
 import os
 import sys
 import shutil
-# (修改) 导入默认配置作为后备
-from config import LLM_CONFIG as DEFAULT_LLM_CONFIG
+from config import LLM_CONFIG
 from video_processor.splitter import split_media_to_audio_chunks_generator
 from video_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model
 from llm_api import run_llm_generation 
 
-# --- (修改) 函数签名，用 runtime_config_override 替换 dify_api_key ---
-def main_process_generator(input_path: str, runtime_config_override: dict, output_filename: str, query: str, whisper_model_size: str, stream_output: bool): 
+# --- (修改) 函数签名，增加 stream_output: bool ---
+def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str, whisper_model_size: str, stream_output: bool): 
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
     """
@@ -33,28 +32,14 @@ def main_process_generator(input_path: str, runtime_config_override: dict, outpu
         
         final_text = "" # 用于累积最终结果以供保存
         
-        # (修改) 计算“有效”配置，用于显示
-        effective_config = DEFAULT_LLM_CONFIG.copy()
-        if runtime_config_override:
-            # 仅合并用户实际输入的值
-            for key, value in runtime_config_override.items():
-                if value:
-                    effective_config[key] = value
-
         try:
-            # (修改) 使用有效配置中的信息
-            provider_name = effective_config.get('provider_name', 'LLM')
-            model_name = effective_config.get('model', 'default')
+            provider_name = LLM_CONFIG.get('provider_name', 'LLM')
+            model_name = LLM_CONFIG.get('model', 'default')
             stream_status = "流式" if stream_output else "非流式"
             yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status})..."
             
-            # (修改) 调用更新后的 llm_api 函数，传入运行时配置
-            llm_call_result = run_llm_generation(
-                full_transcript, 
-                query, 
-                stream_output, 
-                runtime_config_override # <-- 传入覆盖配置
-            )
+            # (修改) 调用更新后的 llm_api 函数
+            llm_call_result = run_llm_generation(full_transcript, query, stream_output)
             
             if stream_output:
                 # 模式一：流式。llm_call_result 是一个生成器
@@ -87,8 +72,7 @@ def main_process_generator(input_path: str, runtime_config_override: dict, outpu
             yield "persistent_error", 0, str(e)
             return
         except Exception as e: # 捕获 API 调用失败 (重试后)
-            # (修改) 使用有效配置中的服务商名称
-            provider_name = effective_config.get('provider_name', 'LLM')
+            provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             user_friendly_error = f"**笔记生成失败**\n\n看起来在与 {provider_name} API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
             return
@@ -108,14 +92,7 @@ def main_process_generator(input_path: str, runtime_config_override: dict, outpu
             return
         
         current_progress += 1
-        
-        # (修改) 计算有效配置
-        effective_config = DEFAULT_LLM_CONFIG.copy()
-        if runtime_config_override:
-            for key, value in runtime_config_override.items():
-                if value:
-                    effective_config[key] = value
-        provider_name = effective_config.get('provider_name', 'LLM')
+        provider_name = LLM_CONFIG.get('provider_name', 'LLM')
         yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {provider_name}..."
         
         final_path = None
@@ -170,6 +147,7 @@ def main_process_generator(input_path: str, runtime_config_override: dict, outpu
         yield "progress", current_progress / total_steps, f"✅ {step_name}切分完成，准备开始转录..."
 
         # --- (新) 步骤：预下载 Whisper 模型 ---
+        # 这一步在主线程中执行，确保模型在启动线程池之前被下载
         try:
             yield "sub_progress", 0.0, f"正在准备转录模型 ({whisper_model_size})..."
             pre_download_whisper_model(whisper_model_size)
@@ -232,13 +210,7 @@ def main_process_generator(input_path: str, runtime_config_override: dict, outpu
             current_progress += 1
             yield "progress", current_progress / total_steps, "文字稿汇总完成。"
             
-        # (修改) 计算有效配置
-        effective_config = DEFAULT_LLM_CONFIG.copy()
-        if runtime_config_override:
-            for key, value in runtime_config_override.items():
-                if value:
-                    effective_config[key] = value
-        provider_name = effective_config.get('provider_name', 'LLM')
+        provider_name = LLM_CONFIG.get('provider_name', 'LLM')
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {provider_name}..."
 
         final_path = None
