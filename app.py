@@ -26,6 +26,14 @@ with st.sidebar:
         help="选择 'Notes' 生成结构化笔记, 'Q&A' 生成问答对, 'Quiz' 生成测验题。(目前仅 'Notes' 功能已接入)"
     )
 
+    # (新) 添加 Whisper 模型大小选择
+    whisper_model_size = st.selectbox(
+        "请选择语音转录模型:",
+        ("tiny", "base", "small", "medium", "large"),
+        index=0,
+        help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用非 'tiny' 模型时，程序会先下载模型文件（可能需要几分钟）。"
+    )
+
     st.markdown("---")
     keep_temp_files = st.checkbox(
         "保留中间文件", 
@@ -72,7 +80,8 @@ if uploaded_file is not None:
             "Quiz": "正在生成测验..."
         }
         st.subheader(processing_headers.get(query_option, "正在处理..."))
-        st.info(f"当前生成模式: **{query_option}**")
+        # (修改) 同时显示转录模型
+        st.info(f"当前生成模式: **{query_option}** (转录模型: **{whisper_model_size}**)")
         
         classification_display = st.empty() # (保留占位，但不再使用)
         llm_output_container = st.empty()
@@ -88,8 +97,14 @@ if uploaded_file is not None:
         with open(temp_file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        # (注意: DIFY_API_KEY 参数现在是多余的，但 main_process_generator 仍需此参数)
-        generator = main_process_generator(temp_file_path, "DUMMY_KEY", output_filename, query_option)
+        # (修改) 将 whisper_model_size 传递给主进程
+        generator = main_process_generator(
+            temp_file_path, 
+            "DUMMY_KEY", 
+            output_filename, 
+            query_option, 
+            whisper_model_size # <-- 新增参数
+        )
         
         for event_type, value, *rest in generator:
             text = rest[0] if rest else ""

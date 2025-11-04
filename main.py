@@ -4,19 +4,15 @@ import time
 import os
 import sys
 import shutil
-# (修改) 导入新的通用配置
 from config import LLM_CONFIG
 from video_processor.splitter import split_media_to_audio_chunks_generator
-from video_processor.transcriber import transcribe_single_audio_chunk
-# (修改) 导入新的通用 LLM API 函数
+from video_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model
 from llm_api import run_llm_generation 
 
-def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str):
+def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str, whisper_model_size: str): 
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
-    - (已修改) 移除 Dify 依赖，转而调用通用的 llm_api.py
     """
-    # (注意: dify_api_key 参数现在已未使用，但为了保持 app.py 调用不变，暂且保留)
     
     output_dir = "output_chunks"
     final_notes_save_path = f"{output_filename}.md"
@@ -29,29 +25,23 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
     current_progress = 0
     full_transcript = ""
 
-    # --- (重构) 移除了 Dify 依赖的辅助函数 ---
     def run_llm_and_yield_results():
         """辅助生成器：运行 LLM 并处理结果。"""
         
         try:
-            # (修改) 动态显示 LLM 服务商和模型
             provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             model_name = LLM_CONFIG.get('model', 'default')
             yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name})..."
             
-            # --- 核心调用 (修改) ---
-            # 这现在是一个阻塞调用，会等待 LLM 完整响应
-            final_text = run_llm_generation(full_transcript, query) # <-- (修改)
+            final_text = run_llm_generation(full_transcript, query)
             
             if not final_text:
-                # (修改) 通用错误信息
                 yield "persistent_error", 0, "**笔记生成失败**\n\nAPI 在多次尝试后，未返回任何有效内容。请检查您的 API 配置以及输入文本是否过长或格式异常。"
                 return
 
             # --- 模拟流式输出 ---
             yield "llm_chunk", final_text
             
-            # --- 保存文件 (逻辑保留) ---
             try:
                 with open(final_notes_save_path, 'w', encoding='utf-8') as f:
                     f.write(final_text)
@@ -65,7 +55,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             yield "persistent_error", 0, str(e)
             return
         except Exception as e: # 捕获 API 调用失败 (重试后)
-            # (修改) 动态显示错误源
             provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             user_friendly_error = f"**笔记生成失败**\n\n看起来在与 {provider_name} API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
@@ -85,12 +74,10 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             return
         
         current_progress += 1
-        # (修改) 动态显示提交目标
         provider_name = LLM_CONFIG.get('provider_name', 'LLM')
         yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {provider_name}..."
         
         final_path = None
-        # --- (修改) 使用新的辅助函数 ---
         llm_gen = run_llm_and_yield_results()
         for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":
@@ -140,6 +127,18 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         current_progress += 1
         yield "progress", current_progress / total_steps, f"✅ {step_name}切分完成，准备开始转录..."
 
+        # --- (新) 步骤：预下载 Whisper 模型 ---
+        # 这一步在主线程中执行，确保模型在启动线程池之前被下载
+        try:
+            yield "sub_progress", 0.0, f"正在准备转录模型 ({whisper_model_size})..."
+            pre_download_whisper_model(whisper_model_size)
+            yield "sub_progress", 1.0, f"✅ 转录模型 ({whisper_model_size}) 准备就绪。"
+        except Exception as e:
+            user_friendly_error = f"**Whisper 模型加载失败**\n\n无法下载或加载指定的 Whisper 模型 '{whisper_model_size}'。\n\n**可能原因:**\n1. 网络连接问题（如果模型未缓存）。\n2. 模型名称拼写错误。\n3. 磁盘空间不足或权限问题。\n\n**原始错误信息:**\n`{e}`"
+            yield "persistent_error", 0, user_friendly_error
+            return
+        # --- 结束新步骤 ---
+
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在并行转录 {len(audio_chunks)} 个音频块..."
         all_transcripts = [None] * len(audio_chunks)
         num_transcribed = 0
@@ -147,7 +146,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
                 future_to_index = {
-                    executor.submit(transcribe_single_audio_chunk, chunk): i
+                    executor.submit(transcribe_single_audio_chunk, chunk, whisper_model_size): i
                     for i, chunk in enumerate(audio_chunks)
                 }
                 
@@ -157,13 +156,13 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                     if result is not None:
                         all_transcripts[index] = result
                     else:
-                        raise Exception(f"本地转录任务未返回有效文本 (块索引: {index})。请检查 Whisper 模型是否正确加载。")
+                        raise Exception(f"本地转录任务未返回有效文本 (块索引: {index}, 模型: {whisper_model_size})。请检查 Whisper 模型是否正确加载。")
                     
                     num_transcribed += 1
                     yield "sub_progress", num_transcribed / len(audio_chunks), f"正在转录... ({num_transcribed}/{len(audio_chunks)})"
 
         except Exception as e:
-            user_friendly_error = f"**音频转录失败**\n\n在本地使用 Whisper 进行语音转文字时发生无法恢复的错误。\n\n**可能原因:**\n1. **Whisper 模型加载失败**: 确保 `tiny` 模型文件可访问。\n2. **依赖库问题**: 确保 `openai-whisper` 及其依赖（如 PyTorch）已正确安装。\n3. **音频数据问题**: 某个音频块可能已损坏无法处理。\n\n**原始错误信息:**\n`{e}`"
+            user_friendly_error = f"**音频转录失败**\n\n在本地使用 Whisper ({whisper_model_size}) 进行语音转文字时发生无法恢复的错误。\n\n**可能原因:**\n1. **Whisper 模型加载失败**: 确保指定的 '{whisper_model_size}' 模型文件可访问。\n2. **依赖库问题**: 确保 `openai-whisper` 及其依赖（如 PyTorch）已正确安装。\n3. **音频数据问题**: 某个音频块可能已损坏无法处理。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
             return
         
@@ -192,12 +191,10 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             current_progress += 1
             yield "progress", current_progress / total_steps, "文字稿汇总完成。"
             
-        # (修改) 动态显示提交目标
         provider_name = LLM_CONFIG.get('provider_name', 'LLM')
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {provider_name}..."
 
         final_path = None
-        # --- (修改) 使用新的辅助函数 ---
         llm_gen = run_llm_and_yield_results()
         for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":
