@@ -4,16 +4,18 @@ import time
 import os
 import sys
 import shutil
+from config import ERNIE_CONFIG
 from video_processor.splitter import split_media_to_audio_chunks_generator
 from video_processor.transcriber import transcribe_single_audio_chunk
-from dify_api import run_workflow_streaming
+from llm_api import run_ernie_generation # <-- 替换为新的 LLM API
 
 def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str):
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
-    - 新增了对持久性错误的捕护和处理，并提供对用户友好的错误日志。
-    - 适配包含安全审查的新版 Dify 工作流。
+    - (已修改) 移除 Dify 依赖，转而调用 llm_api.py
     """
+    # (注意: dify_api_key 参数现在已未使用，但为了保持 app.py 调用不变，暂且保留)
+    
     output_dir = "output_chunks"
     final_notes_save_path = f"{output_filename}.md"
     
@@ -25,87 +27,42 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
     current_progress = 0
     full_transcript = ""
 
-    def run_dify_and_yield_results():
-        """辅助生成器：运行Dify工作流并处理事件（已适配安全审查流程）。"""
-        final_llm_output_chunks = []
-        final_outputs = None  # 用于捕获工作流结束时的最终输出
-
-        dify_generator = run_workflow_streaming(
-            input_text=full_transcript,
-            query=query,
-            user="streamlit_user",
-            dify_api_key=dify_api_key
-        )
+    # --- (重构) 移除了 Dify 依赖的辅助函数 ---
+    def run_llm_and_yield_results():
+        """辅助生成器：运行 ERNIE LLM 并处理结果。"""
         
-        for event_type, data in dify_generator:
-            if event_type == "text_chunk":
-                final_llm_output_chunks.append(data)
-                yield "llm_chunk", data
+        try:
+            yield "progress_text", f"正在提交给 ERNIE (模型: {ERNIE_CONFIG.get('model', 'default')})..."
             
-            elif event_type == "classification_result":
-                category_map = {
-                    "NOTES_STEM": "这是一个理工科 (STEM) 领域的笔记",
-                    "NOTES_HASS": "这是一个⼈文社科 (HASS) 领域的笔记",
-                }
-                friendly_text = category_map.get(data, f"无法识别笔记领域，将使用默认模板。识别码: {data}")
-                yield "display_classification", friendly_text
-                
-            elif event_type == "error":
-                user_friendly_error = f"**笔记生成失败**\n\n看起来在与 Dify 服务通信时遇到了问题。这通常与 API Key 或网络有关。\n\n**原始错误信息:**\n`{data}`"
+            # --- 核心调用 ---
+            # 这现在是一个阻塞调用，会等待 LLM 完整响应
+            final_text = run_ernie_generation(full_transcript, query)
+            
+            if not final_text:
+                yield "persistent_error", 0, "**笔记生成失败**\n\nERNIE API 在多次尝试后，未返回任何有效内容。请检查您的 API 配置以及输入文本是否过长或格式异常。"
+                return
+
+            # --- 模拟流式输出 ---
+            # 为了让 UI 能够显示结果，我们一次性将完整结果作为 "llm_chunk" 发送
+            yield "llm_chunk", final_text
+            
+            # (移除了 Dify 特有的安全审查和回退分支逻辑)
+            
+            # --- 保存文件 (逻辑保留) ---
+            try:
+                with open(final_notes_save_path, 'w', encoding='utf-8') as f:
+                    f.write(final_text)
+                yield "save_path", final_notes_save_path
+            except IOError as e:
+                user_friendly_error = f"**保存最终笔记文件失败**\n\n无法将生成的笔记写入本地文件。\n\n**可能原因:**\n- 程序没有在当前目录创建文件的权限。\n- 磁盘空间不足。\n\n**原始错误信息:**\n`{e}`"
                 yield "persistent_error", 0, user_friendly_error
                 return
 
-            elif event_type == "node_started":
-                yield "progress_text", f"Dify 节点 '{data}' 已开始..."
-
-            elif event_type == "workflow_finished":
-                final_outputs = data  # 捕获最终输出的字典
-                break
-        
-        # 工作流已结束，现在分析最终结果
-        final_text_from_chunks = "".join(final_llm_output_chunks)
-        
-        # 从工作流的最终输出变量 'final_output' 中获取值
-        final_output_value = final_outputs.get('final_output', '').strip() if final_outputs else ""
-
-        # 1. 优先检查安全警告
-        if final_output_value == 'INJECTION_DETECTED':
-            error_message = "**安全警告：检测到指令注入攻击**\n\n您的输入中可能包含试图操控系统行为的指令。为安全起见，处理已终止。"
-            yield "persistent_error", 0, error_message
+        except ValueError as e: # 捕获 (query != "Notes") 的错误
+            yield "persistent_error", 0, str(e)
             return
-
-        if final_output_value == 'SENSITIVE_CONTENT_DETECTED':
-            error_message = "**内容警告：检测到不当敏感内容**\n\n您的输入中可能包含不适宜的词汇。为遵守社区准则，处理已终止。"
-            yield "persistent_error", 0, error_message
-            return
-        
-        # 2. 检查设计好的回退分支（例如，查询无效或分类失败）
-        # 在这些情况下，工作流会将原始 query 作为 final_output 返回
-        if final_output_value == query:
-            error_message = ""
-            if query == "Notes":
-                error_message = "**笔记生成失败**\n\n无法自动识别笔记的领域 (例如理工科/人文社科)。工作流已终止，因为它无法选择合适的笔记模板。"
-            else:
-                error_message = f"**无效的操作类型**\n\n请求的操作 '{query}' 不是一个有效的选项 ('Notes', 'Q&A', 'Quiz')。工作流已终止。"
-            yield "persistent_error", 0, error_message
-            return
-        
-        # 3. 如果没有触发特定错误，则最终内容为流式输出的文本
-        final_text = final_text_from_chunks
-        
-        if "</think>" in final_text:
-            final_text = final_text.split("</think>")[-1].strip()
-
-        if not final_text:
-            yield "persistent_error", 0, "**笔记生成失败**\n\nDify 工作流在多次尝试后，未返回任何有效内容。请检查您的 Dify 工作流配置以及输入文本是否过长或格式异常。"
-            return
-
-        try:
-            with open(final_notes_save_path, 'w', encoding='utf-8') as f:
-                f.write(final_text)
-            yield "save_path", final_notes_save_path
-        except IOError as e:
-            user_friendly_error = f"**保存最终笔记文件失败**\n\n无法将生成的笔记写入本地文件。\n\n**可能原因:**\n- 程序没有在当前目录创建文件的权限。\n- 磁盘空间不足。\n\n**原始错误信息:**\n`{e}`"
+        except Exception as e: # 捕获 API 调用失败 (重试后)
+            user_friendly_error = f"**笔记生成失败**\n\n看起来在与 ERNIE API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
             return
 
@@ -122,18 +79,23 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             yield "persistent_error", 0, user_friendly_error
             return
         
+        if not full_transcript or full_transcript.strip() == "":
+            yield "persistent_error", 0, "**输入内容为空**\n\n您上传的文本文档为空或只包含空白字符，无法生成笔记。"
+            return
+        
         current_progress += 1
-        yield "progress", current_progress / total_steps, "步骤 2/2: 正在提交给 Dify 工作流 (流式传输)..."
+        yield "progress", current_progress / total_steps, "步骤 2/2: 正在提交给 ERNIE 工作流..."
         
         final_path = None
-        # 使用已修改的辅助函数
-        dify_gen = run_dify_and_yield_results()
-        for event_type, value, *rest in dify_gen:
+        # --- (修改) 使用新的辅助函数 ---
+        llm_gen = run_llm_and_yield_results()
+        for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":
                 yield event_type, value, rest[0]
                 return
-            elif event_type == "display_classification":
-                yield event_type, value
+            # (移除) 不再有 "display_classification" 事件
+            # elif event_type == "display_classification":
+            #     yield event_type, value
             elif event_type == "llm_chunk":
                 yield event_type, value
             elif event_type == "progress_text":
@@ -149,6 +111,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
 
     # === 视频和音频文件工作流 ===
     elif file_ext in video_exts or file_ext in audio_exts:
+        # ... (媒体文件切分和转录部分保持不变) ...
         is_video = file_ext in video_exts
         total_steps = 4 if is_video else 3
         
@@ -218,6 +181,10 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         
         full_transcript = "\n\n".join(filter(None, all_transcripts))
         
+        if not full_transcript or full_transcript.strip() == "":
+            yield "persistent_error", 0, "**转录结果为空**\n\n未能从您的媒体文件中转录出任何有效文本（可能文件为静音或已损坏），无法生成笔记。"
+            return
+
         transcript_save_path = "source_transcript.txt"
         try:
             with open(transcript_save_path, 'w', encoding='utf-8') as f:
@@ -229,17 +196,18 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             current_progress += 1
             yield "progress", current_progress / total_steps, "文字稿汇总完成。"
             
-        yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 Dify 工作流 (流式传输)..."
+        yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 ERNIE 工作流..."
 
         final_path = None
-        # 使用已修改的辅助函数
-        dify_gen = run_dify_and_yield_results()
-        for event_type, value, *rest in dify_gen:
+        # --- (修改) 使用新的辅助函数 ---
+        llm_gen = run_llm_and_yield_results()
+        for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":
                 yield event_type, value, rest[0]
                 return
-            elif event_type == "display_classification":
-                yield event_type, value
+            # (移除) 不再有 "display_classification" 事件
+            # elif event_type == "display_classification":
+            #     yield event_type, value
             elif event_type == "llm_chunk":
                 yield event_type, value
             elif event_type == "progress_text":

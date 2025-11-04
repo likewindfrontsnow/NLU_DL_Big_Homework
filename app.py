@@ -2,13 +2,15 @@
 import streamlit as st
 import os
 from main import main_process_generator
-from config import DIFY_API_KEY 
+# from config import DIFY_API_KEY # <-- Dify Key 不再需要
+from config import ERNIE_CONFIG # <-- 仅为加载配置，确保 main 能访问
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
 st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记、Q&A 或测验。")
 
-st.info("💡 **提示**: 视频/音频文件将使用本地 Whisper 模型进行语音转文字。")
+# --- (修改) 更新提示信息 ---
+st.info("💡 **提示**: 视频/音频文件将使用本地 Whisper 转录，笔记生成将调用 ERNIE API。")
 
 with st.sidebar:
     st.header("⚙️ 参数配置")
@@ -19,7 +21,7 @@ with st.sidebar:
         "请选择生成内容类型:",
         ("Notes", "Q&A", "Quiz"),
         index=0,
-        help="选择 'Notes' 生成结构化笔记, 'Q&A' 生成问答对, 'Quiz' 生成测验题。"
+        help="选择 'Notes' 生成结构化笔记, 'Q&A' 生成问答对, 'Quiz' 生成测验题。(目前仅 'Notes' 功能已接入 ERNIE)"
     )
 
     st.markdown("---")
@@ -62,14 +64,14 @@ if uploaded_file is not None:
         st.markdown("---")
 
         processing_headers = {
-            "Notes": "正在生成笔记 (实时输出中...)",
-            "Q&A": "正在进行 Q&A (实时输出中...)",
-            "Quiz": "正在生成测验 (实时输出中...)"
+            "Notes": "正在生成笔记 (ERNIE 非流式)...",
+            "Q&A": "正在进行 Q&A...",
+            "Quiz": "正在生成测验..."
         }
         st.subheader(processing_headers.get(query_option, "正在处理..."))
         st.info(f"当前生成模式: **{query_option}**")
         
-        classification_display = st.empty()
+        classification_display = st.empty() # (保留占位，但不再使用)
         llm_output_container = st.empty()
         full_llm_response = ""
         
@@ -83,7 +85,8 @@ if uploaded_file is not None:
         with open(temp_file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        generator = main_process_generator(temp_file_path, DIFY_API_KEY, output_filename, query_option)
+        # (注意: DIFY_API_KEY 参数现在是多余的，但 main_process_generator 仍需此参数)
+        generator = main_process_generator(temp_file_path, "DUMMY_KEY", output_filename, query_option)
         
         for event_type, value, *rest in generator:
             text = rest[0] if rest else ""
@@ -95,12 +98,14 @@ if uploaded_file is not None:
                 sub_progress_bar.progress(float(value))
                 sub_progress_text.text(text)
             
-            elif event_type == "display_classification":
-                classification_display.success(f"✅ **笔记分类**: {value}")
+            # --- (移除) 不再处理 'display_classification' 事件 ---
+            # elif event_type == "display_classification":
+            #     classification_display.success(f"✅ **笔记分类**: {value}")
 
             elif event_type == "llm_chunk":
+                # 因为是非流式，value 将是完整的笔记内容
                 full_llm_response += value
-                llm_output_container.markdown(full_llm_response + " ▌")
+                llm_output_container.markdown(full_llm_response) # 直接显示完整内容
             
             elif event_type == "persistent_error":
                 st.error(f"处理失败: {text}")
@@ -135,14 +140,13 @@ if uploaded_file is not None:
             )
         
         if not keep_temp_files:
-            # 1. 清理上传的临时文件
+            # ... (文件清理逻辑保持不变) ...
             try:
                 if os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
             except OSError as e:
                 st.warning(f"无法自动删除临时上传文件 '{temp_file_path}': {e}")
 
-            # 2. 清理生成的文字稿文件
             transcript_path = "source_transcript.txt"
             try:
                 if os.path.exists(transcript_path):
