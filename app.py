@@ -32,6 +32,12 @@ if "refinement_in_progress" not in st.session_state:
 if "refinement_stop_requested" not in st.session_state:
     st.session_state.refinement_stop_requested = False
 
+# 初始化精炼表单的状态
+if "preset_feedback" not in st.session_state:
+    st.session_state.preset_feedback = "(请选择一个快捷指令)"
+if "custom_feedback" not in st.session_state:
+    st.session_state.custom_feedback = ""
+
 is_busy = st.session_state.processing_started or st.session_state.refinement_in_progress
 
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
@@ -65,7 +71,7 @@ with st.sidebar:
         key="transcription_provider",
         help="""
         - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，首次加载较慢。
-        - **Qwen API**: 调用阿里云 Qwen API，相比Local Whisper速度更快，精度更高。
+        - **Qwen API**: 调用阿里云 Qwen ASR API，相比Local Whisper速度更快，精度更高。
         """,
         disabled=is_busy
     )
@@ -146,6 +152,15 @@ if uploaded_file is not None and not is_busy and not st.session_state.processing
 
 def handle_stop():
     st.session_state.stop_requested = True
+
+def on_preset_change():
+    if st.session_state.preset_feedback != "(请选择一个快捷指令)":
+        st.session_state.custom_feedback = ""
+
+def on_custom_change():
+    if st.session_state.custom_feedback != "":
+        st.session_state.preset_feedback = "(请选择一个快捷指令)"
+
 
 stop_button_placeholder = st.empty()
 
@@ -311,7 +326,7 @@ if st.session_state.current_notes:
     col1, col2 = st.columns(2)
     
     with col1:
-        preset_feedback = st.selectbox(
+        st.selectbox(
             "快捷指令:",
             (
                 "(请选择一个快捷指令)", 
@@ -321,17 +336,23 @@ if st.session_state.current_notes:
                 "把语气变得更专业严肃",
                 "帮我用项目符号(bullet points)重新组织"
             ),
-            disabled=is_busy
+            disabled=is_busy,
+            key="preset_feedback",
+            on_change=on_preset_change
         )
     
     with col2:
-        custom_feedback = st.text_input(
+        st.text_input(
             "或输入你的自定义指令:", 
             placeholder="例如：请重点扩写第二部分...",
-            disabled=is_busy
+            disabled=is_busy,
+            key="custom_feedback",
+            on_change=on_custom_change
         )
 
-    feedback = custom_feedback if custom_feedback else preset_feedback
+    preset_val = st.session_state.preset_feedback
+    custom_val = st.session_state.custom_feedback
+    feedback = custom_val if custom_val else preset_val
     
     if st.button("🚀 开始精炼", use_container_width=True, type="primary", disabled=is_busy):
         
@@ -406,4 +427,6 @@ if st.session_state.processing_has_failed:
         st.session_state.stop_requested = False
         st.session_state.refinement_in_progress = False
         st.session_state.refinement_stop_requested = False
+        st.session_state.preset_feedback = "(请选择一个快捷指令)"
+        st.session_state.custom_feedback = ""
         st.rerun()
