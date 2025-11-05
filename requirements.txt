@@ -1,4 +1,5 @@
-openai
-python-dotenv
-requests
 streamlit
+requests
+python-dotenv
+dashscope
+openai-whisper
