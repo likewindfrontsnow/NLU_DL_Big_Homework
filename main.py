@@ -11,14 +11,15 @@ from video_processor.transcriber import transcribe_single_audio_chunk, pre_downl
 # (修改) 导入新的精炼函数 (虽然 main 不直接用，但 app.py 会用)
 from llm_api import run_llm_generation, refine_llm_generation 
 
-# --- (TA 修改) 函数签名，移除 query: str ---
-def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, asr_context: str | None = None): 
+# --- (TA 修改) 函数签名，增加 note_type: str ---
+def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None): 
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
     - transcription_provider: "Local Whisper" 或 "Qwen API"
     - (修改) 现在会 yield "transcript", full_transcript
     - (TA 修改) 增加 asr_context 用于 Qwen API
     - (TA 修改) 移除了 query 参数
+    - (TA 修改) 增加了 note_type 参数 (STEM / HASS)
     """
     
     output_dir = "output_chunks"
@@ -42,10 +43,11 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             model_name = LLM_CONFIG.get('model', 'default')
             stream_status = "流式" if stream_output else "非流式"
-            yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status})..."
+            # (TA 修改) 在提示中加入笔记类型
+            yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status}, 类型: {note_type})..."
             
-            # (TA 修改) 调用更新后的 llm_api 函数 (已移除 query)
-            llm_call_result = run_llm_generation(full_transcript, stream_output)
+            # (TA 修改) 调用更新后的 llm_api 函数 (已移除 query, 增加 note_type)
+            llm_call_result = run_llm_generation(full_transcript, stream_output, note_type)
             
             if stream_output:
                 for chunk in llm_call_result:

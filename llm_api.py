@@ -4,7 +4,7 @@ import json
 import time
 from typing import Generator, Union
 from config import LLM_CONFIG 
-from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_REFINER # (修改) 导入新
+from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_HASS, PROMPT_NOTES_REFINER # (TA 修改) 导入 HASS
 from utils import retry 
 
 # --- (私有) 流式处理函数 (不变) ---
@@ -79,14 +79,25 @@ def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, N
             print(f"❌ API 响应结构异常: {result}")
             raise Exception("API 响应异常，未包含有效内容")
 
-# --- (TA 修改) 笔记生成函数 (移除 query 参数) ---
-def run_llm_generation(input_text: str, stream_output: bool) -> Union[Generator[str, None, None], str]:
+# --- (TA 修改) 笔记生成函数 (移除 query 参数, 增加 note_type) ---
+def run_llm_generation(input_text: str, stream_output: bool, note_type: str) -> Union[Generator[str, None, None], str]:
     """
-    (修改) 任务 1: 从转录稿 (input_text) 生成初始笔记。 (已移除 query 参数)
+    (修改) 任务 1: 从转录稿 (input_text) 生成初始笔记。
+    (TA 修改) 增加 note_type 参数以选择 Prompt。
     """
     
-    # (TA 修改) 移除 if query == "Notes": 检查，因为现在这是唯一功能
-    final_prompt = PROMPT_NOTES_STEM.format(source_transcript=input_text)
+    # (TA 修改) 根据 note_type 选择 Prompt
+    if note_type == "HASS":
+        prompt_template = PROMPT_NOTES_HASS
+        print("  > 使用 HASS (人文社科) Prompt")
+    else: 
+        # 默认为 STEM
+        if note_type != "STEM":
+            print(f"  > 警告: 未知的 note_type '{note_type}'，将默认使用 STEM。")
+        prompt_template = PROMPT_NOTES_STEM
+        print("  > 使用 STEM (理工科) Prompt")
+    
+    final_prompt = prompt_template.format(source_transcript=input_text)
     
     messages = [
         {"role": "system", "content": final_prompt} 

@@ -28,6 +28,9 @@ if "processing_has_failed" not in st.session_state:
 # (TA 修改) 为 Qwen ASR 上下文添加 session state
 if "asr_context" not in st.session_state:
     st.session_state.asr_context = ""
+# (TA 新增) 为笔记类型添加 session state
+if "note_type" not in st.session_state:
+    st.session_state.note_type = "STEM" # 默认使用 STEM
 # --- 结束新增 ---
 
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
@@ -40,6 +43,17 @@ with st.sidebar:
         "请输入希望的笔记文件名 (无需后缀)", 
         value=st.session_state.output_filename
     )
+    
+    # --- (TA 新增) 笔记类型选择 ---
+    note_type_option = st.radio(
+        "请选择笔记类型:",
+        ("STEM", "HASS"),
+        index=0, # 默认选中 STEM
+        key="note_type", # 直接用 key 绑定 session state
+        horizontal=True,
+        help="STEM (理工科) 适用于数学/代码/科学。HASS (人文社科) 适用于历史/文学/社会学。"
+    )
+    # --- 结束新增 ---
 
     # (TA 修改) 完整移除了 query_option (Q&A / Quiz) 的选择框
     
@@ -161,7 +175,8 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
     
     # (TA 修改) 移除了 query_option
-    st.info(f"{asr_config_text}")
+    # (TA 新增) 显示选择的笔记类型
+    st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}**")
     
     llm_output_container = st.empty()
     full_llm_response = ""
@@ -186,6 +201,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
          st.rerun() # <-- (修正)
 
     # (TA 修改) 移除了 generator 调用的 query_option 参数
+    # (TA 新增) 传入 st.session_state.note_type
     generator = main_process_generator(
         temp_file_path, 
         "DUMMY_KEY", 
@@ -193,6 +209,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
         whisper_model_size,
         stream_output,
         transcription_provider,
+        st.session_state.note_type, # (TA 新增) 传入笔记类型
         st.session_state.asr_context # (TA 修改) 传入上下文参数
     )
     
