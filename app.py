@@ -27,6 +27,12 @@ if "note_type" not in st.session_state:
     st.session_state.note_type = "STEM"
 if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
+if "refinement_in_progress" not in st.session_state:
+    st.session_state.refinement_in_progress = False
+if "refinement_stop_requested" not in st.session_state:
+    st.session_state.refinement_stop_requested = False
+
+is_busy = st.session_state.processing_started or st.session_state.refinement_in_progress
 
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
 st.info(f"💡 **提示**: 视频/音频文件将使用所选转录服务，笔记生成将调用 **{provider_name}** API。")
@@ -37,7 +43,7 @@ with st.sidebar:
     st.session_state.output_filename = st.text_input(
         "请输入希望的笔记文件名 (无需后缀)", 
         value=st.session_state.output_filename,
-        disabled=st.session_state.processing_started
+        disabled=is_busy
     )
     
     note_type_option = st.radio(
@@ -47,7 +53,7 @@ with st.sidebar:
         key="note_type", 
         horizontal=True,
         help="STEM (理工科) 适用于数学/代码/科学。HASS (人文社科) 适用于历史/文学/社会学。",
-        disabled=st.session_state.processing_started
+        disabled=is_busy
     )
 
     st.markdown("---")
@@ -59,9 +65,9 @@ with st.sidebar:
         key="transcription_provider",
         help="""
         - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，首次加载较慢。
-        - **Qwen API**: 调用阿里云 Qwen ASR API，相比Local Whisper速度更快，精度更高。
+        - **Qwen API**: 调用阿里云 Qwen API，相比Local Whisper速度更快，精度更高。
         """,
-        disabled=st.session_state.processing_started
+        disabled=is_busy
     )
     
     whisper_model_size = "tiny" 
@@ -71,7 +77,7 @@ with st.sidebar:
             ("tiny", "base", "small", "medium", "large"),
             index=0,
             help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用模型时，程序会先下载模型文件（可能需要几分钟）。",
-            disabled=st.session_state.processing_started
+            disabled=is_busy
         )
         if st.session_state.asr_context != "":
             st.session_state.asr_context = "" 
@@ -86,7 +92,7 @@ with st.sidebar:
             value=st.session_state.asr_context,
             placeholder="例如: Bulge Bracket, Boutique, 投行...",
             help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。",
-            disabled=st.session_state.processing_started
+            disabled=is_busy
         )
 
     st.markdown("---")
@@ -94,15 +100,15 @@ with st.sidebar:
         "启用笔记流式输出", 
         value=True, 
         help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。",
-        disabled=st.session_state.processing_started
+        disabled=is_busy
     )
 
     st.markdown("---")
     keep_temp_files = st.checkbox(
         "保留语音转文字稿", 
         value=False, 
-        help="勾S选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。",
-        disabled=st.session_state.processing_started
+        help="勾选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。",
+        disabled=is_busy
     )
 
     st.info("请在上方配置好参数后，上传文件开始处理。")
@@ -122,7 +128,7 @@ with st.expander("查看所有支持的文件格式"):
 uploaded_file = st.file_uploader(
     "上传视频、音频或文档", 
     type=all_exts,
-    disabled=st.session_state.processing_started
+    disabled=is_busy
 )
 
 if uploaded_file is not None and st.session_state.last_uploaded_filename != uploaded_file.name:
@@ -133,7 +139,7 @@ if uploaded_file is not None and st.session_state.last_uploaded_filename != uplo
     st.session_state.processing_has_failed = False
     st.rerun() 
 
-if uploaded_file is not None and not st.session_state.processing_started and not st.session_state.processing_has_failed:
+if uploaded_file is not None and not is_busy and not st.session_state.processing_has_failed:
     if st.button("开始生成", use_container_width=True, type="primary"):
         st.session_state.processing_started = True
         st.rerun()
@@ -294,6 +300,12 @@ if st.session_state.current_notes:
     
     st.markdown("---")
     st.subheader("✍️ 笔记精炼")
+    
+    def handle_refinement_stop():
+        st.session_state.refinement_stop_requested = True
+    
+    refinement_stop_button_placeholder = st.empty()
+    
     st.info("对当前生成的笔记不满意？请选择快捷指令或输入您的修改意见。")
 
     col1, col2 = st.columns(2)
@@ -308,60 +320,83 @@ if st.session_state.current_notes:
                 "把语气变得更生动有趣",
                 "把语气变得更专业严肃",
                 "帮我用项目符号(bullet points)重新组织"
-            )
+            ),
+            disabled=is_busy
         )
     
     with col2:
         custom_feedback = st.text_input(
             "或输入你的自定义指令:", 
-            placeholder="例如：请重点扩写第二部分..."
+            placeholder="例如：请重点扩写第二部分...",
+            disabled=is_busy
         )
 
-    if st.button("🚀 开始精炼", use_container_width=True, type="primary"):
-        feedback = custom_feedback if custom_feedback else preset_feedback
+    feedback = custom_feedback if custom_feedback else preset_feedback
+    
+    if st.button("🚀 开始精炼", use_container_width=True, type="primary", disabled=is_busy):
         
         if feedback == "(请选择一个快捷指令)" or not feedback:
             st.warning("请输入或选择一个修改指令。")
         elif not st.session_state.full_transcript:
             st.error("错误：未找到原始转录稿，无法进行精炼。请重新处理文件。")
         else:
-            st.info("正在根据您的反馈重新生成笔记...")
-            refined_notes = ""
-            
-            try:
-                regenerator = refine_llm_generation(
-                    original_transcript=st.session_state.full_transcript,
-                    current_notes=st.session_state.current_notes,
-                    user_feedback=feedback,
-                    stream_output=stream_output
-                )
+            st.session_state.refinement_feedback = feedback
+            st.session_state.refinement_in_progress = True
+            st.session_state.refinement_stop_requested = False
+            st.rerun()
 
-                if stream_output:
-                    for chunk in regenerator:
-                        if chunk:
-                            refined_notes += chunk
-                            note_display_area.markdown(refined_notes)
-                else:
-                    refined_notes = regenerator
+if st.session_state.refinement_in_progress and not st.session_state.processing_started:
+
+    refinement_stop_button_placeholder.button("⏹️ 停止精炼", on_click=handle_refinement_stop, use_container_width=True)
+    st.info(f"正在根据指令精炼笔记: *'{st.session_state.refinement_feedback}'*")
+    
+    refined_notes = ""
+    
+    try:
+        regenerator = refine_llm_generation(
+            original_transcript=st.session_state.full_transcript,
+            current_notes=st.session_state.current_notes,
+            user_feedback=st.session_state.refinement_feedback,
+            stream_output=stream_output
+        )
+
+        if stream_output:
+            for chunk in regenerator:
+                if st.session_state.get("refinement_stop_requested", False):
+                    st.warning("精炼已由用户手动停止。")
+                    break
+                
+                if chunk:
+                    refined_notes += chunk
                     note_display_area.markdown(refined_notes)
-                
-                st.session_state.current_notes = refined_notes
-                
-                try:
-                    save_path = f"{st.session_state.output_filename}_refined.md"
-                    with open(save_path, 'w', encoding='utf-8') as f:
-                        f.write(refined_notes)
-                    st.success(f"精炼完成！")
-                except IOError as e:
-                    st.error(f"保存精炼笔记失败: {e}")
-                
-                st.rerun()
+        else:
+            if not st.session_state.get("refinement_stop_requested", False):
+                refined_notes = regenerator
+            else:
+                st.warning("精炼已由用户手动停止。")
 
-            except Exception as e:
-                st.error(f"精炼过程中出错: {e}")
+        if not st.session_state.get("refinement_stop_requested", False):
+            st.session_state.current_notes = refined_notes if refined_notes else st.session_state.current_notes
+            try:
+                save_path = f"{st.session_state.output_filename}_refined.md"
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write(st.session_state.current_notes)
+                st.success(f"精炼完成！")
+            except IOError as e:
+                st.error(f"保存精炼笔记失败: {e}")
+
+    except Exception as e:
+        st.error(f"精炼过程中出错: {e}")
+    
+    finally:
+        st.session_state.refinement_in_progress = False
+        st.session_state.refinement_stop_requested = False
+        refinement_stop_button_placeholder.empty()
+        st.rerun()
+
 
 if st.session_state.processing_has_failed:
-    st.error("处理失败。请检查文件或配置。")
+    st.error("上次处理失败。请检查文件或配置。")
     if st.button("🔄 重新开始", use_container_width=True):
         st.session_state.processing_started = False
         st.session_state.current_notes = None
@@ -369,4 +404,6 @@ if st.session_state.processing_has_failed:
         st.session_state.last_uploaded_filename = None
         st.session_state.processing_has_failed = False
         st.session_state.stop_requested = False
+        st.session_state.refinement_in_progress = False
+        st.session_state.refinement_stop_requested = False
         st.rerun()
