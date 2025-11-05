@@ -10,7 +10,7 @@ from video_processor.transcriber import transcribe_single_audio_chunk, pre_downl
 from llm_api import run_llm_generation, refine_llm_generation 
 
 # 生成器函数，处理流程并实时产出进度与LLM文本块
-def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None): 
+def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None): 
     # 一些初始化工作
     output_dir = "output_chunks"
     final_notes_save_path = f"{output_filename}.md"
@@ -225,7 +225,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             yield "error", 0, f"无法保存文字稿文件: {e}"
 
         yield "transcript", full_transcript 
-        
+
         if is_video:
             current_progress += 1
             yield "progress", current_progress / total_steps, "文字稿汇总完成。"
@@ -256,3 +256,89 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         user_friendly_error = f"**不支持的文件类型**\n\n您上传的文件类型 (`{file_ext}`) 当前不受支持。请参照上传框下的提示，上传指定格式的视频、音频或文本文档。"
         yield "error", 0, user_friendly_error
         return
+
+
+# 用于运行、打印生成器输出
+def run_test(test_file_path, provider="", model_size="tiny", context=None, stream=False):
+    print(f"\n>>> 正在测试文件: {test_file_path} (服务: {provider})")
+    
+    if not os.path.exists(test_file_path):
+        print(f"!!! 警告: 测试文件 '{test_file_path}' 不存在。跳过此测试。")
+        return
+
+    try:
+        output_name = os.path.splitext(os.path.basename(test_file_path))[0] + "_test_notes"
+        
+        generator = main_process_generator(
+            input_path=test_file_path,
+            output_filename=output_name,
+            whisper_model_size=model_size,
+            stream_output=stream,
+            transcription_provider=provider,
+            asr_context=context,
+            note_type="STEM"
+        )
+
+        final_path = None
+        
+        for event_type, value, *rest in generator:
+            text = rest[0] if rest else ""
+            
+            if event_type == "progress":
+                print(f"[进度] {value*100:.0f}% - {text}")
+            elif event_type == "sub_progress":
+                print(f"  [子进度] {value*100:.0f}% - {text}")
+            elif event_type == "transcript":
+                print(f"[转录稿生成] (前100字符): {value[:100]}...")
+            elif event_type == "llm_chunk":
+                print(f"{value}", end="")
+            elif event_type == "persistent_error" or event_type == "error":
+                print(f"\n\n!!! [严重错误] {text} !!!")
+                break
+            elif event_type == "done":
+                final_path = value
+                print(f"\n\n[完成] {text}")
+                print(f"最终文件保存在: {final_path}")
+                break
+        
+        if final_path:
+            print(f"\n>>> ✅ 测试 {test_file_path} 成功。")
+        else:
+            print(f"\n>>> ❌ 测试 {test_file_path} 失败或未完成。")
+
+    except Exception as e:
+        print(f"\n!!! [测试时发生意外异常] {e}")
+        import traceback
+        traceback.print_exc()
+
+
+
+# 测试
+# if __name__ == "__main__":
+#     print("--- [主模块测试] 开始 ---")
+
+# # **测试 1: 文本文档**
+# print("--- 开始测试 [文本文档] ---")
+# run_test(
+#     test_file_path="test_doc.txt",
+#     provider="Local Whisper"
+# )
+
+# **测试 2: 音频文件 (Local Whisper)**
+# print("--- 开始测试 [音频文件 - Local Whisper] ---")
+# run_test(
+#     test_file_path="test_audio.mp3", 
+#     provider="Local Whisper",
+#     model_size="tiny",
+#     stream=False 
+# )
+
+# **测试 3: 音频文件 (Qwen API)**
+# print("--- 开始测试 [音频文件 - Qwen API] ---")
+# run_test(
+#     test_file_path="test_audio.mp3",
+#     provider="Qwen API",
+#     context="财经, 投行, A股", # 测试上下文
+#     stream=False
+# )
+    
