@@ -24,6 +24,9 @@ if "last_uploaded_filename" not in st.session_state:
     st.session_state.last_uploaded_filename = None
 if "processing_has_failed" not in st.session_state:
     st.session_state.processing_has_failed = False
+# (TA 修改) 为 Qwen ASR 上下文添加 session state
+if "asr_context" not in st.session_state:
+    st.session_state.asr_context = ""
 # --- 结束新增 ---
 
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
@@ -65,8 +68,24 @@ with st.sidebar:
             index=0,
             help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用非 'tiny' 模型时，程序会先下载模型文件（可能需要几分钟）。"
         )
+        # (TA 修改) 如果没选 Qwen，清空上下文
+        if st.session_state.asr_context != "":
+            st.session_state.asr_context = "" 
     else:
         st.info("Qwen API 将使用 qwen3-asr-flash 模型。")
+    
+    # (TA 修改) 仅在选择 Qwen API 时显示上下文输入框
+    if transcription_provider == "Qwen API":
+        st.markdown("---")
+        st.subheader("ASR 上下文增强 (Qwen)")
+        # (TA 修改) 使用 session_state 绑定
+        st.session_state.asr_context = st.text_area(
+            "输入专业术语 (用于提升 ASR 准确率)",
+            value=st.session_state.asr_context,
+            placeholder="例如: Bulge Bracket, Boutique, 投行...",
+            help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。仅在选择 Qwen API 时生效。"
+        )
+
 
     st.markdown("---")
     stream_output = st.toggle(
@@ -145,6 +164,9 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
         asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
     else:
         asr_config_text = "转录服务: **Qwen API** (模型: **qwen3-asr-flash**)"
+        # (TA 修改) 如果有上下文，也显示出来
+        if st.session_state.asr_context:
+            asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
     
     st.info(f"笔记模式: **{query_option}** | {asr_config_text}")
     
@@ -178,7 +200,8 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
         query_option, 
         whisper_model_size,
         stream_output,
-        transcription_provider 
+        transcription_provider,
+        st.session_state.asr_context # (TA 修改) 传入上下文参数
     )
     
     for event_type, value, *rest in generator:

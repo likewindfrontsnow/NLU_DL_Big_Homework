@@ -11,12 +11,13 @@ from video_processor.transcriber import transcribe_single_audio_chunk, pre_downl
 # (修改) 导入新的精炼函数 (虽然 main 不直接用，但 app.py 会用)
 from llm_api import run_llm_generation, refine_llm_generation 
 
-# --- (修改) 函数签名，增加 stream_output: bool 和 transcription_provider: str ---
-def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str, whisper_model_size: str, stream_output: bool, transcription_provider: str): 
+# --- (TA 修改) 函数签名，增加 asr_context: str | None = None ---
+def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, asr_context: str | None = None): 
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
     - transcription_provider: "Local Whisper" 或 "Qwen API"
     - (修改) 现在会 yield "transcript", full_transcript
+    - (TA 修改) 增加 asr_context 用于 Qwen API
     """
     
     output_dir = "output_chunks"
@@ -130,7 +131,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         # --- (关键修改) 根据 ASR 提供商设置切分时长 ---
         if transcription_provider == "Qwen API":
             chunk_duration_seconds = 170 
-            yield "sub_progress", 0.0, f"使用 Qwen API，设置音频块时长为 {chunk_duration_seconds} 秒"
+            yield "sub_progress", 0.0, f"使用 Qwen API，设置音频块时长为 {chunk_duration_seconds} 秒 (API 限制 3 分钟内)"
         else:
             chunk_duration_seconds = 600
             yield "sub_progress", 0.0, f"使用 Local Whisper，设置音频块时长为 {chunk_duration_seconds} 秒"
@@ -189,7 +190,8 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                 elif transcription_provider == "Qwen API":
                     print("--- 开始使用 Qwen API (模型: qwen3-asr-flash) 进行转录 ---")
                     future_to_index = {
-                        executor.submit(transcribe_with_qwen, chunk): i
+                        # (TA 修改) 传入 asr_context
+                        executor.submit(transcribe_with_qwen, chunk, asr_context): i
                         for i, chunk in enumerate(audio_chunks)
                     }
                 # --- 结束修改 ---

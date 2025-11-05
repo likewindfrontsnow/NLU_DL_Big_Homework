@@ -3,7 +3,8 @@ import os
 import whisper
 import threading
 import dashscope
-from config import DASHSCOPE_API_KEY
+from config import LLM_API_KEY
+DASHSCOPE_API_KEY=LLM_API_KEY
 from utils import retry
 import subprocess 
 
@@ -38,7 +39,7 @@ def _load_whisper_model(model_name: str):
         # 确保一次只有一个线程在执行 whisper.load_model()
         # 这可以防止因同时从磁盘读取/反序列化模型文件而引起的竞争条件
         with _LOAD_LOCK:
-            print(f"  > (线程 {threading.current_thread().name}) 正在获取加载锁...")
+            print(f"  > (线程 {threading.current_thread().name})  đang获取加载锁...")
             model = whisper.load_model(model_name) 
             print(f"  > (线程 {threading.current_thread().name}) 已释放加载锁。")
         
@@ -99,14 +100,19 @@ QWEN_RETRY_EXCEPTIONS = (
     Exception # 捕获 DashScope SDK 的通用 API 错误
 )
 
+# (TA 修改) 增加 asr_context 参数
 @retry(max_retries=3, delay=5, allowed_exceptions=QWEN_RETRY_EXCEPTIONS)
-def transcribe_with_qwen(audio_path: str) -> str | None:
+def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str | None:
     """
     调用 Qwen ASR API (qwen3-asr-flash) 转录单个音频文件。
+    (TA 修改) 支持上下文增强 (Contextual Enhancement)。
     使用 file:// 协议上传本地文件。
     """
     audio_filename = os.path.basename(audio_path)
     print(f"  > [Qwen API] 正在提交: {audio_filename} (线程: {threading.current_thread().name})")
+    # (TA 修改) 如果提供了上下文，打印提示
+    if asr_context:
+        print(f"  > [Qwen API] 使用上下文增强: {asr_context[:50]}...")
 
     try:
         # 确保 API Key 已设置
@@ -121,8 +127,18 @@ def transcribe_with_qwen(audio_path: str) -> str | None:
         # 获取绝对路径，Qwen API 需要 file:// 协议和绝对路径
         abs_audio_path = os.path.abspath(audio_path)
         
-        # Qwen3-ASR API 不使用 system prompt
+        # (TA 修改) 根据 Qwen3-ASR 文档构建 messages
+        # System role 用于上下文增强
+        context_text = asr_context if asr_context else ""
+        
         messages = [
+            {
+                "role": "system",
+                "content": [
+                    # 此处用于配置定制化识别的Context
+                    {"text": context_text},
+                ]
+            },
             {
                 "role": "user",
                 "content": [
@@ -131,6 +147,7 @@ def transcribe_with_qwen(audio_path: str) -> str | None:
                 ]
             }
         ]
+        # --- 结束 TA 修改 ---
 
         # 设置北京地域的 API URL (如果需要新加坡，请更改)
         dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
