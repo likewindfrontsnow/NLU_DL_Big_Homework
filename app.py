@@ -89,12 +89,11 @@ with st.sidebar:
         help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。"
     )
 
-    # 此处有问题，只需要保留语音转文字稿
     st.markdown("---")
     keep_temp_files = st.checkbox(
-        "保留中间文件", 
+        "保留语音转文字稿", 
         value=False, 
-        help="勾选后将保留上传的临时文件和语音转文字生成的文字稿"
+        help="勾选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。"
     )
 
     st.info("请在上方配置好参数后，上传文件开始处理。")
@@ -116,7 +115,6 @@ uploaded_file = st.file_uploader(
     type=all_exts
 )
 
-# 上传新文件，重置所有状态
 if uploaded_file is not None and st.session_state.last_uploaded_filename != uploaded_file.name:
     st.session_state.processing_started = False
     st.session_state.current_notes = None
@@ -125,13 +123,11 @@ if uploaded_file is not None and st.session_state.last_uploaded_filename != uplo
     st.session_state.processing_has_failed = False
     st.rerun() 
 
-# 开始按钮仅在流程上传好文件，流程未开始且未失败时显示
 if uploaded_file is not None and not st.session_state.processing_started and not st.session_state.processing_has_failed:
     if st.button("开始生成", use_container_width=True, type="primary"):
         st.session_state.processing_started = True
         st.rerun()
 
-# 仅在处理已开始且笔记未生成且未失败时运行
 if st.session_state.processing_started and st.session_state.current_notes is None and not st.session_state.processing_has_failed:
     
     st.markdown("---")
@@ -177,7 +173,6 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
 
     generator = main_process_generator(
         temp_file_path, 
-        "DUMMY_KEY", 
         st.session_state.output_filename, 
         whisper_model_size,
         stream_output,
@@ -229,11 +224,6 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             st.session_state.current_notes = full_llm_response
             
             if not keep_temp_files:
-                try:
-                    if os.path.exists(temp_file_path):
-                        os.remove(temp_file_path)
-                except OSError as e:
-                    st.warning(f"无法自动删除临时上传文件 '{temp_file_path}': {e}")
                 transcript_path = "source_transcript.txt"
                 try:
                     if os.path.exists(transcript_path):
@@ -241,13 +231,18 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
                 except OSError as e:
                     st.warning(f"无法自动删除文字稿文件 '{transcript_path}': {e}")
             else:
-                st.info("已根据您的设置，保留了中间文件。")
+                st.info("已根据您的设置，保留了语音转文字稿。")
+            
+            try:
+                if os.path.exists(temp_file_path):
+                    os.remove(temp_file_path)
+            except OSError as e:
+                st.warning(f"无法自动删除临时上传文件 '{temp_file_path}': {e}")
             
             st.rerun() 
             break
 
 
-# 仅在“笔记已生成”时显示笔记和精炼 UI
 if st.session_state.current_notes:
     
     st.markdown("---")
@@ -332,7 +327,6 @@ if st.session_state.current_notes:
             except Exception as e:
                 st.error(f"精炼过程中出错: {e}")
 
-# 失败时显示重试按钮
 if st.session_state.processing_has_failed:
     st.error("上次处理失败。请检查文件或配置。")
     if st.button("🔄 重新开始", use_container_width=True):
@@ -341,4 +335,4 @@ if st.session_state.processing_has_failed:
         st.session_state.full_transcript = None
         st.session_state.last_uploaded_filename = None
         st.session_state.processing_has_failed = False
-        st.rerun() 
+        st.rerun()
