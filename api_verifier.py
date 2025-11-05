@@ -15,12 +15,8 @@ except ValueError as e:
 
 
 def check_api_connectivity(config: dict) -> bool:
-    """
-    检测通用 LLM API 的连通性、密钥有效性和模型可用性。
-    """
     print("--- 正在检测 API 连通性与密钥有效性 ---")
     
-    # 1. 检查传入的通用配置
     api_key = config.get('api_key')
     base_url = config.get('base_url')
     model = config.get('model')
@@ -36,10 +32,6 @@ def check_api_connectivity(config: dict) -> bool:
         print("❌ 配置错误：LLM_CONFIG 中 'model' 为空。")
         return False
 
-    # 2. 准备测试请求
-    #    我们使用一个简单的 "hello" 来测试连通性。
-    #    这使得脚本更健壮，不依赖本地文件。
-    #    如果你需要测试长文本，可以手动把长文本粘贴到这里。
     test_prompt = "hello"
     
     try:
@@ -58,17 +50,14 @@ def check_api_connectivity(config: dict) -> bool:
         print(f"正在尝试连接到: {api_url} (服务商: {provider_name})")
         print(f"使用模型: {model}")
 
-        # 3. 发送请求
         response = requests.post(api_url, json=payload, headers=headers, timeout=120)
 
-        # 4. 分析响应
         if response.status_code == 200:
             result = response.json()
             if 'choices' in result and result.get('choices', [{}])[0].get('message', {}).get('content'):
                 print("✅ API 密钥有效，连通性良好！")
                 print(f"   模型 ({model}) 返回示例: \"{result['choices'][0]['message']['content'][:30]}...\"")
                 return True
-            # 增加对 OpenAI 兼容错误的处理
             elif 'error' in result: 
                 print(f"❌ API 业务错误: {result.get('error')}")
                 return False

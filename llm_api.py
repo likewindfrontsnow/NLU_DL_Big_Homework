@@ -7,12 +7,8 @@ from config import LLM_CONFIG
 from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_HASS, PROMPT_NOTES_REFINER # (TA 修改) 导入 HASS
 from utils import retry 
 
-# --- (私有) 流式处理函数 (不变) ---
+# 处理流式响应
 def _handle_streaming_response(response: requests.Response) -> Generator[str, None, None]:
-    """
-    (私有) 处理流式 API 响应的生成器。
-    - 兼容 OpenAI 格式 (data: {...})
-    """
     for line in response.iter_lines():
         if not line:
             continue
@@ -35,8 +31,9 @@ def _handle_streaming_response(response: requests.Response) -> Generator[str, No
         except Exception as e:
             print(f"  > (stream) 处理块时出错: {e}, 块: {line_str}")
 
-# --- (新增) 基础 LLM 调用函数 ---
 @retry(max_retries=3, delay=5, allowed_exceptions=(requests.exceptions.RequestException,))
+
+# 调用LLM API，发送消息并处理响应
 def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, None, None], str]:
     """
     (重构) 基础的 LLM API 调用函数。
@@ -79,39 +76,26 @@ def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, N
             print(f"❌ API 响应结构异常: {result}")
             raise Exception("API 响应异常，未包含有效内容")
 
-# --- (TA 修改) 笔记生成函数 (移除 query 参数, 增加 note_type) ---
+# 从转录稿生成初始笔记
 def run_llm_generation(input_text: str, stream_output: bool, note_type: str) -> Union[Generator[str, None, None], str]:
-    """
-    (修改) 任务 1: 从转录稿 (input_text) 生成初始笔记。
-    (TA 修改) 增加 note_type 参数以选择 Prompt。
-    """
     
-    # (TA 修改) 根据 note_type 选择 Prompt
-    if note_type == "HASS":
-        prompt_template = PROMPT_NOTES_HASS
-        print("  > 使用 HASS (人文社科) Prompt")
-    else: 
-        # 默认为 STEM
-        if note_type != "STEM":
-            print(f"  > 警告: 未知的 note_type '{note_type}'，将默认使用 STEM。")
+    if note_type == "STEM":
         prompt_template = PROMPT_NOTES_STEM
         print("  > 使用 STEM (理工科) Prompt")
-    
+    else: 
+        prompt_template = PROMPT_NOTES_HASS
+        print("  > 使用 HASS (人文社科) Prompt")
+
     final_prompt = prompt_template.format(source_transcript=input_text)
     
     messages = [
         {"role": "system", "content": final_prompt} 
     ]
     
-    # (修改) 调用基础 API 函数
     return _call_llm_api(messages, stream_output)
 
-# --- (新增) 笔记精炼函数 ---
+# 根据反馈修改当前笔记
 def refine_llm_generation(original_transcript: str, current_notes: str, user_feedback: str, stream_output: bool) -> Union[Generator[str, None, None], str]:
-    """
-    (新增) 任务 2: 根据反馈，精炼现有笔记。
-    """
-    
     # 构建多轮对话的 messages 列表
     messages = [
         {"role": "system", "content": PROMPT_NOTES_REFINER},
@@ -131,5 +115,4 @@ def refine_llm_generation(original_transcript: str, current_notes: str, user_fee
         """}
     ]
     
-    # (修改) 调用基础 API 函数
     return _call_llm_api(messages, stream_output)

@@ -3,35 +3,28 @@ import streamlit as st
 import os
 from main import main_process_generator
 from config import LLM_CONFIG 
-# (新增) 导入精炼函数
 from llm_api import refine_llm_generation 
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
-# (TA 修改) 移除 Q&A 和 Quiz
 st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
 
-# --- (新增) Session State 初始化 ---
-# 用于在重新运行 (rerun) 之间保持状态
 if "processing_started" not in st.session_state:
     st.session_state.processing_started = False
 if "current_notes" not in st.session_state:
-    st.session_state.current_notes = None # 存储生成的笔记
+    st.session_state.current_notes = None
 if "full_transcript" not in st.session_state:
-    st.session_state.full_transcript = None # 存储原始转录稿
+    st.session_state.full_transcript = None
 if "output_filename" not in st.session_state:
     st.session_state.output_filename = "我的学习笔记"
 if "last_uploaded_filename" not in st.session_state:
     st.session_state.last_uploaded_filename = None
 if "processing_has_failed" not in st.session_state:
     st.session_state.processing_has_failed = False
-# (TA 修改) 为 Qwen ASR 上下文添加 session state
 if "asr_context" not in st.session_state:
     st.session_state.asr_context = ""
-# (TA 新增) 为笔记类型添加 session state
 if "note_type" not in st.session_state:
-    st.session_state.note_type = "STEM" # 默认使用 STEM
-# --- 结束新增 ---
+    st.session_state.note_type = "STEM"
 
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
 st.info(f"💡 **提示**: 视频/音频文件将使用所选转录服务，笔记生成将调用 **{provider_name}** API。")
@@ -44,19 +37,15 @@ with st.sidebar:
         value=st.session_state.output_filename
     )
     
-    # --- (TA 新增) 笔记类型选择 ---
     note_type_option = st.radio(
         "请选择笔记类型:",
         ("STEM", "HASS"),
-        index=0, # 默认选中 STEM
-        key="note_type", # 直接用 key 绑定 session state
+        index=0, 
+        key="note_type", 
         horizontal=True,
         help="STEM (理工科) 适用于数学/代码/科学。HASS (人文社科) 适用于历史/文学/社会学。"
     )
-    # --- 结束新增 ---
 
-    # (TA 修改) 完整移除了 query_option (Q&A / Quiz) 的选择框
-    
     st.markdown("---")
     st.subheader("语音转录 (ASR) 配置")
     transcription_provider = st.radio(
@@ -65,8 +54,8 @@ with st.sidebar:
         index=0,
         key="transcription_provider",
         help="""
-        - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，无需联网。
-        - **Qwen API**: 调用阿里云 Qwen ASR API，速度快，精度可能更高，但需要联网且音频文件会被上传。
+        - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，首次加载较慢。
+        - **Qwen API**: 调用阿里云 Qwen ASR API，相比Local Whisper速度更快，精度更高。
         """
     )
     
@@ -76,26 +65,22 @@ with st.sidebar:
             "请选择 Whisper 模型:",
             ("tiny", "base", "small", "medium", "large"),
             index=0,
-            help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用非 'tiny' 模型时，程序会先下载模型文件（可能需要几分钟）。"
+            help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用模型时，程序会先下载模型文件（可能需要几分钟）。"
         )
-        # (TA 修改) 如果没选 Qwen，清空上下文
         if st.session_state.asr_context != "":
             st.session_state.asr_context = "" 
     else:
         st.info("Qwen API 将使用 qwen3-asr-flash 模型。")
     
-    # (TA 修改) 仅在选择 Qwen API 时显示上下文输入框
     if transcription_provider == "Qwen API":
         st.markdown("---")
         st.subheader("ASR 上下文增强 (Qwen)")
-        # (TA 修改) 使用 session_state 绑定
         st.session_state.asr_context = st.text_area(
-            "输入专业术语 (用于提升 ASR 准确率)",
+            "输入热词 (用于提升 ASR 准确率)",
             value=st.session_state.asr_context,
             placeholder="例如: Bulge Bracket, Boutique, 投行...",
-            help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。仅在选择 Qwen API 时生效。"
+            help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。"
         )
-
 
     st.markdown("---")
     stream_output = st.toggle(
@@ -104,11 +89,12 @@ with st.sidebar:
         help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。"
     )
 
+    # 此处有问题，只需要保留语音转文字稿
     st.markdown("---")
     keep_temp_files = st.checkbox(
         "保留中间文件", 
         value=False, 
-        help="勾选后将保留上传的临时文件和语音转文字生成的 `source_transcript.txt`。"
+        help="勾选后将保留上传的临时文件和语音转文字生成的文字稿"
     )
 
     st.info("请在上方配置好参数后，上传文件开始处理。")
@@ -130,26 +116,22 @@ uploaded_file = st.file_uploader(
     type=all_exts
 )
 
-# --- (修改) 检查是否上传了新文件 ---
+# 上传新文件，重置所有状态
 if uploaded_file is not None and st.session_state.last_uploaded_filename != uploaded_file.name:
-    # 如果是新文件，重置所有状态
     st.session_state.processing_started = False
     st.session_state.current_notes = None
     st.session_state.full_transcript = None
     st.session_state.last_uploaded_filename = uploaded_file.name
     st.session_state.processing_has_failed = False
-    # (重要) 立即刷新，让 "开始生成" 按钮出现
-    st.rerun() # <-- (修正)
+    st.rerun() 
 
-
-# --- (修改) 逻辑块 1: 仅在“未开始”且“未失败”时显示“开始”按钮 ---
+# 开始按钮仅在流程上传好文件，流程未开始且未失败时显示
 if uploaded_file is not None and not st.session_state.processing_started and not st.session_state.processing_has_failed:
     if st.button("开始生成", use_container_width=True, type="primary"):
-        # 标记处理已开始，并立即刷新
         st.session_state.processing_started = True
-        st.rerun() # <-- (修正)
+        st.rerun()
 
-# --- (修改) 逻辑块 2: 仅在“已开始”但“笔记未生成”时运行处理 ---
+# 仅在处理已开始且笔记未生成且未失败时运行
 if st.session_state.processing_started and st.session_state.current_notes is None and not st.session_state.processing_has_failed:
     
     st.markdown("---")
@@ -163,19 +145,15 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
     st.markdown("---")
 
     stream_status = "流式" if stream_output else "非流式"
-    # (TA 修改) 移除了 processing_headers 字典，直接使用固定标题
     st.subheader(f"正在生成笔记 ({provider_name} {stream_status})...")
     
     if transcription_provider == "Local Whisper":
         asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
     else:
         asr_config_text = "转录服务: **Qwen API** (模型: **qwen3-asr-flash**)"
-        # (TA 修改) 如果有上下文，也显示出来
         if st.session_state.asr_context:
             asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
     
-    # (TA 修改) 移除了 query_option
-    # (TA 新增) 显示选择的笔记类型
     st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}**")
     
     llm_output_container = st.empty()
@@ -183,25 +161,20 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
     
     final_result_path = None
     
-    # 重新获取文件路径 (因为 state 刷新了)
     temp_dir = "temp_uploads"
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
     temp_file_path = os.path.join(temp_dir, st.session_state.last_uploaded_filename)
     
-    # (重要) 检查文件是否还存在，如果不存在（例如用户清空了缓存），则提示
     try:
         if not os.path.exists(temp_file_path):
-            # 重新写入
             with open(temp_file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
     except Exception as e:
          st.error(f"无法访问临时文件: {e}。请重新上传。")
          st.session_state.processing_started = False
-         st.rerun() # <-- (修正)
+         st.rerun() 
 
-    # (TA 修改) 移除了 generator 调用的 query_option 参数
-    # (TA 新增) 传入 st.session_state.note_type
     generator = main_process_generator(
         temp_file_path, 
         "DUMMY_KEY", 
@@ -209,8 +182,8 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
         whisper_model_size,
         stream_output,
         transcription_provider,
-        st.session_state.note_type, # (TA 新增) 传入笔记类型
-        st.session_state.asr_context # (TA 修改) 传入上下文参数
+        st.session_state.note_type, 
+        st.session_state.asr_context
     )
     
     for event_type, value, *rest in generator:
@@ -234,15 +207,15 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             st.error(f"处理失败: {text}")
             main_progress_text.error("一个关键步骤在多次重试后仍然失败，已停止处理。")
             llm_output_container.error(f"**错误详情:**\n\n{text}")
-            st.session_state.processing_has_failed = True # 标记失败
-            st.rerun() # <-- (修正)
+            st.session_state.processing_has_failed = True 
+            st.rerun() 
             break
         
         elif event_type == "error":
             st.error(text)
             llm_output_container.error(text)
-            st.session_state.processing_has_failed = True # 标记失败
-            st.rerun() # <-- (修正)
+            st.session_state.processing_has_failed = True 
+            st.rerun() 
             break
 
         elif event_type == "done":
@@ -250,14 +223,11 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             sub_progress_bar.empty()
             sub_progress_text.empty()
             
-            # (修改) 不再在此处显示，只保存到 state
-            # llm_output_container.markdown(full_llm_response) 
             st.success(text)
             final_result_path = value
             
             st.session_state.current_notes = full_llm_response
             
-            # (修改) 清理临时文件
             if not keep_temp_files:
                 try:
                     if os.path.exists(temp_file_path):
@@ -273,18 +243,16 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             else:
                 st.info("已根据您的设置，保留了中间文件。")
             
-            # (关键) 处理完成，立即刷新
-            st.rerun() # <-- (修正)
+            st.rerun() 
             break
 
 
-# --- (修改) 逻辑块 3: 仅在“笔记已生成”时显示笔记和精炼 UI ---
+# 仅在“笔记已生成”时显示笔记和精炼 UI
 if st.session_state.current_notes:
     
     st.markdown("---")
     st.subheader("🎉 智能笔记")
     
-    # (修改) 这是笔记的唯一显示区域
     note_display_area = st.empty()
     note_display_area.markdown(st.session_state.current_notes)
         
@@ -330,7 +298,6 @@ if st.session_state.current_notes:
             st.error("错误：未找到原始转录稿，无法进行精炼。请重新处理文件。")
         else:
             st.info("正在根据您的反馈重新生成笔记...")
-            # (修改) 直接在唯一的显示区域流式输出
             refined_notes = ""
             
             try:
@@ -345,15 +312,13 @@ if st.session_state.current_notes:
                     for chunk in regenerator:
                         if chunk:
                             refined_notes += chunk
-                            note_display_area.markdown(refined_notes) # 实时替换
+                            note_display_area.markdown(refined_notes)
                 else:
                     refined_notes = regenerator
                     note_display_area.markdown(refined_notes)
                 
-                # (关键) 用新笔记覆盖旧笔记
                 st.session_state.current_notes = refined_notes
                 
-                # (新增) 保存精炼后的笔记
                 try:
                     save_path = f"{st.session_state.output_filename}_refined.md"
                     with open(save_path, 'w', encoding='utf-8') as f:
@@ -362,20 +327,18 @@ if st.session_state.current_notes:
                 except IOError as e:
                     st.error(f"保存精炼笔记失败: {e}")
                 
-                # (新增) 再次 Rerun 以清理“正在精炼”的提示
-                st.rerun() # <-- (修正)
+                st.rerun()
 
             except Exception as e:
                 st.error(f"精炼过程中出错: {e}")
 
-# --- (修改) 逻辑块 4: 仅在“失败”时显示重试按钮 ---
+# 失败时显示重试按钮
 if st.session_state.processing_has_failed:
     st.error("上次处理失败。请检查文件或配置。")
     if st.button("🔄 重新开始", use_container_width=True):
-        # 重置所有状态
         st.session_state.processing_started = False
         st.session_state.current_notes = None
         st.session_state.full_transcript = None
         st.session_state.last_uploaded_filename = None
         st.session_state.processing_has_failed = False
-        st.rerun() # <-- (修正)
+        st.rerun() 

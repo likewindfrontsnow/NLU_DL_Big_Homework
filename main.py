@@ -7,21 +7,11 @@ import shutil
 from config import LLM_CONFIG
 from video_processor.splitter import split_media_to_audio_chunks_generator
 from video_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model, transcribe_with_qwen
-
-# (修改) 导入新的精炼函数 (虽然 main 不直接用，但 app.py 会用)
 from llm_api import run_llm_generation, refine_llm_generation 
 
-# --- (TA 修改) 函数签名，增加 note_type: str ---
+# 生成器函数，处理流程并实时产出进度与LLM文本块
 def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None): 
-    """
-    - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
-    - transcription_provider: "Local Whisper" 或 "Qwen API"
-    - (修改) 现在会 yield "transcript", full_transcript
-    - (TA 修改) 增加 asr_context 用于 Qwen API
-    - (TA 修改) 移除了 query 参数
-    - (TA 修改) 增加了 note_type 参数 (STEM / HASS)
-    """
-    
+    # 一些初始化工作
     output_dir = "output_chunks"
     final_notes_save_path = f"{output_filename}.md"
     
@@ -33,20 +23,18 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
     current_progress = 0
     full_transcript = ""
 
-    # --- (辅助函数 run_llm_and_yield_results) ---
+    # 运行llm并处理结果
     def run_llm_and_yield_results():
-        """辅助生成器：运行 LLM 并处理结果（支持流式和非流式）。"""
         
-        final_text = "" # 用于累积最终结果以供保存
+        final_text = "" 
         
         try:
             provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             model_name = LLM_CONFIG.get('model', 'default')
             stream_status = "流式" if stream_output else "非流式"
-            # (TA 修改) 在提示中加入笔记类型
             yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status}, 类型: {note_type})..."
             
-            # (TA 修改) 调用更新后的 llm_api 函数 (已移除 query, 增加 note_type)
+            # 转录稿full_transcript传输给llm生成笔记
             llm_call_result = run_llm_generation(full_transcript, stream_output, note_type)
             
             if stream_output:
@@ -63,7 +51,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                 yield "persistent_error", 0, "**笔记生成失败**\n\nAPI 在多次尝试后，未返回任何有效内容。请检查您的 API 配置以及输入文本是否过长或格式异常。"
                 return
 
-            # --- 仅在所有内容生成后保存 ---
             try:
                 with open(final_notes_save_path, 'w', encoding='utf-8') as f:
                     f.write(final_text)
@@ -81,10 +68,8 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             user_friendly_error = f"**笔记生成失败**\n\n看起来在与 {provider_name} API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
             return
-    # --- 辅助函数结束 ---
-
-
-    # === 文本文件工作流 ===
+        
+    # === 文本文档工作流 ===    
     if file_ext in text_exts:
         total_steps = 2
         yield "progress", 0 / total_steps, "步骤 1/2: 正在读取文本文档..."
@@ -96,9 +81,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             yield "persistent_error", 0, user_friendly_error
             return
         
-        # --- (关键修改) ---
-        yield "transcript", full_transcript # 传递转录稿
-        # --- 结束修改 ---
+        yield "transcript", full_transcript 
         
         current_progress += 1
         provider_name = LLM_CONFIG.get('provider_name', 'LLM')
@@ -131,13 +114,12 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         step_name = "视频" if is_video else "音频"
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在切分{step_name}为音频块..."
         
-        # --- (关键修改) 根据 ASR 提供商设置切分时长 ---
         if transcription_provider == "Qwen API":
             chunk_duration_seconds = 170 
-            yield "sub_progress", 0.0, f"使用 Qwen API，设置音频块时长为 {chunk_duration_seconds} 秒 (API 限制 3 分钟内)"
+            yield "sub_progress", 0.0, f"使用 Qwen API"
         else:
-            chunk_duration_seconds = 600
-            yield "sub_progress", 0.0, f"使用 Local Whisper，设置音频块时长为 {chunk_duration_seconds} 秒"
+            chunk_duration_seconds = 720
+            yield "sub_progress", 0.0, f"使用 Local Whisper"
 
         splitter_generator = split_media_to_audio_chunks_generator(input_path, output_dir, chunk_duration_seconds) 
         audio_chunks = []
@@ -161,7 +143,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         current_progress += 1
         yield "progress", current_progress / total_steps, f"✅ {step_name}切分完成，准备开始转录..."
 
-        # --- (修改) 仅在需要时预下载 Whisper 模型 ---
         if transcription_provider == "Local Whisper":
             try:
                 yield "sub_progress", 0.0, f"正在准备 Whisper 转录模型 ({whisper_model_size})..."
@@ -173,7 +154,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                 return
         else:
              yield "sub_progress", 1.0, f"✅ Qwen API 准备就绪。"
-        # --- 结束修改 ---
 
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在并行转录 {len(audio_chunks)} 个音频块..."
         all_transcripts = [None] * len(audio_chunks)
@@ -181,8 +161,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                
-                # --- (关键修改) 根据 ASR 提供商提交不同的任务 ---
                 future_to_index = {}
                 if transcription_provider == "Local Whisper":
                     print(f"--- 开始使用 Local Whisper (模型: {whisper_model_size}) 进行转录 ---")
@@ -193,11 +171,9 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                 elif transcription_provider == "Qwen API":
                     print("--- 开始使用 Qwen API (模型: qwen3-asr-flash) 进行转录 ---")
                     future_to_index = {
-                        # (TA 修改) 传入 asr_context
                         executor.submit(transcribe_with_qwen, chunk, asr_context): i
                         for i, chunk in enumerate(audio_chunks)
                     }
-                # --- 结束修改 ---
 
                 
                 for future in concurrent.futures.as_completed(future_to_index):
@@ -248,10 +224,8 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         except IOError as e:
             yield "error", 0, f"无法保存文字稿文件: {e}"
 
-        # --- (关键修改) ---
-        yield "transcript", full_transcript # 传递转录稿
-        # --- 结束修改 ---
-
+        yield "transcript", full_transcript 
+        
         if is_video:
             current_progress += 1
             yield "progress", current_progress / total_steps, "文字稿汇总完成。"
