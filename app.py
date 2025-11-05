@@ -34,7 +34,8 @@ with st.sidebar:
 
     st.session_state.output_filename = st.text_input(
         "请输入希望的笔记文件名 (无需后缀)", 
-        value=st.session_state.output_filename
+        value=st.session_state.output_filename,
+        disabled=st.session_state.processing_started
     )
     
     note_type_option = st.radio(
@@ -43,7 +44,8 @@ with st.sidebar:
         index=0, 
         key="note_type", 
         horizontal=True,
-        help="STEM (理工科) 适用于数学/代码/科学。HASS (人文社科) 适用于历史/文学/社会学。"
+        help="STEM (理工科) 适用于数学/代码/科学。HASS (人文社科) 适用于历史/文学/社会学。",
+        disabled=st.session_state.processing_started
     )
 
     st.markdown("---")
@@ -56,7 +58,8 @@ with st.sidebar:
         help="""
         - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，首次加载较慢。
         - **Qwen API**: 调用阿里云 Qwen ASR API，相比Local Whisper速度更快，精度更高。
-        """
+        """,
+        disabled=st.session_state.processing_started
     )
     
     whisper_model_size = "tiny" 
@@ -65,7 +68,8 @@ with st.sidebar:
             "请选择 Whisper 模型:",
             ("tiny", "base", "small", "medium", "large"),
             index=0,
-            help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用模型时，程序会先下载模型文件（可能需要几分钟）。"
+            help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用模型时，程序会先下载模型文件（可能需要几分钟）。",
+            disabled=st.session_state.processing_started
         )
         if st.session_state.asr_context != "":
             st.session_state.asr_context = "" 
@@ -79,21 +83,24 @@ with st.sidebar:
             "输入热词 (用于提升 ASR 准确率)",
             value=st.session_state.asr_context,
             placeholder="例如: Bulge Bracket, Boutique, 投行...",
-            help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。"
+            help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。",
+            disabled=st.session_state.processing_started
         )
 
     st.markdown("---")
     stream_output = st.toggle(
         "启用笔记流式输出", 
         value=True, 
-        help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。"
+        help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。",
+        disabled=st.session_state.processing_started
     )
 
     st.markdown("---")
     keep_temp_files = st.checkbox(
         "保留语音转文字稿", 
         value=False, 
-        help="勾选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。"
+        help="勾选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。",
+        disabled=st.session_state.processing_started
     )
 
     st.info("请在上方配置好参数后，上传文件开始处理。")
@@ -112,7 +119,8 @@ with st.expander("查看所有支持的文件格式"):
 
 uploaded_file = st.file_uploader(
     "上传视频、音频或文档", 
-    type=all_exts
+    type=all_exts,
+    disabled=st.session_state.processing_started
 )
 
 if uploaded_file is not None and st.session_state.last_uploaded_filename != uploaded_file.name:
@@ -203,6 +211,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             main_progress_text.error("一个关键步骤在多次重试后仍然失败，已停止处理。")
             llm_output_container.error(f"**错误详情:**\n\n{text}")
             st.session_state.processing_has_failed = True 
+            st.session_state.processing_started = False
             st.rerun() 
             break
         
@@ -210,6 +219,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             st.error(text)
             llm_output_container.error(text)
             st.session_state.processing_has_failed = True 
+            st.session_state.processing_started = False
             st.rerun() 
             break
 
@@ -222,6 +232,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             final_result_path = value
             
             st.session_state.current_notes = full_llm_response
+            st.session_state.processing_started = False
             
             if not keep_temp_files:
                 transcript_path = "source_transcript.txt"
