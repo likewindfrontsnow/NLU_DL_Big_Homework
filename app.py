@@ -32,7 +32,6 @@ if "refinement_in_progress" not in st.session_state:
 if "refinement_stop_requested" not in st.session_state:
     st.session_state.refinement_stop_requested = False
 
-# 初始化精炼表单的状态
 if "preset_feedback" not in st.session_state:
     st.session_state.preset_feedback = "(请选择一个快捷指令)"
 if "custom_feedback" not in st.session_state:
@@ -71,7 +70,7 @@ with st.sidebar:
         key="transcription_provider",
         help="""
         - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，首次加载较慢。
-        - **Qwen API**: 调用阿里云 Qwen ASR API，相比Local Whisper速度更快，精度更高。
+        - **Qwen API**: 调用阿里云 Qwen API，相比Local Whisper速度更快，精度更高。
         """,
         disabled=is_busy
     )
@@ -310,7 +309,8 @@ if st.session_state.current_notes:
         data=st.session_state.current_notes,
         file_name=f"{st.session_state.output_filename}.md",
         mime="text/markdown",
-        use_container_width=True
+        use_container_width=True,
+        disabled=is_busy
     )
     
     st.markdown("---")
