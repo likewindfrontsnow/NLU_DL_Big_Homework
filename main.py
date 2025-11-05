@@ -6,18 +6,17 @@ import sys
 import shutil
 from config import LLM_CONFIG
 from video_processor.splitter import split_media_to_audio_chunks_generator
-
-# (修改) 导入 Qwen 转录器和 Whisper 转录器
-# 你的 transcriber.py 现在有两个函数
 from video_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model, transcribe_with_qwen
 
-from llm_api import run_llm_generation 
+# (修改) 导入新的精炼函数 (虽然 main 不直接用，但 app.py 会用)
+from llm_api import run_llm_generation, refine_llm_generation 
 
 # --- (修改) 函数签名，增加 stream_output: bool 和 transcription_provider: str ---
 def main_process_generator(input_path: str, dify_api_key: str, output_filename: str, query: str, whisper_model_size: str, stream_output: bool, transcription_provider: str): 
     """
     - 一个生成器函数，执行处理流程并实时产出状态、进度和LLM文本块。
     - transcription_provider: "Local Whisper" 或 "Qwen API"
+    - (修改) 现在会 yield "transcript", full_transcript
     """
     
     output_dir = "output_chunks"
@@ -47,16 +46,13 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             llm_call_result = run_llm_generation(full_transcript, query, stream_output)
             
             if stream_output:
-                # 模式一：流式。llm_call_result 是一个生成器
                 for chunk in llm_call_result:
                     if chunk:
                         final_text += chunk
                         yield "llm_chunk", chunk
             else:
-                # 模式二：非流式。llm_call_result 是一个字符串
                 final_text = llm_call_result
                 if final_text:
-                    # 仍然作为 "llm_chunk" 产出，以便 app.py 统一处理
                     yield "llm_chunk", final_text 
             
             if not final_text:
@@ -73,10 +69,10 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                 yield "persistent_error", 0, user_friendly_error
                 return
 
-        except ValueError as e: # 捕获 (query != "Notes") 的错误
+        except ValueError as e: 
             yield "persistent_error", 0, str(e)
             return
-        except Exception as e: # 捕获 API 调用失败 (重试后)
+        except Exception as e: 
             provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             user_friendly_error = f"**笔记生成失败**\n\n看起来在与 {provider_name} API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
@@ -84,7 +80,7 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
     # --- 辅助函数结束 ---
 
 
-    # === 文本文件工作流 (保持不变) ===
+    # === 文本文件工作流 ===
     if file_ext in text_exts:
         total_steps = 2
         yield "progress", 0 / total_steps, "步骤 1/2: 正在读取文本文档..."
@@ -96,12 +92,15 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
             yield "persistent_error", 0, user_friendly_error
             return
         
+        # --- (关键修改) ---
+        yield "transcript", full_transcript # 传递转录稿
+        # --- 结束修改 ---
+        
         current_progress += 1
         provider_name = LLM_CONFIG.get('provider_name', 'LLM')
         yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {provider_name}..."
         
         final_path = None
-        # (修改) 此处调用已更新的 run_llm_and_yield_results
         llm_gen = run_llm_and_yield_results()
         for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":
@@ -122,7 +121,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
 
     # === 视频和音频文件工作流 ===
     elif file_ext in video_exts or file_ext in audio_exts:
-        # ... 
         is_video = file_ext in video_exts
         total_steps = 4 if is_video else 3
         
@@ -130,17 +128,14 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在切分{step_name}为音频块..."
         
         # --- (关键修改) 根据 ASR 提供商设置切分时长 ---
-        # Qwen API 限制 3 分钟 (180s)，我们设置为 170s 作为缓冲
-        # Whisper 没这个限制，我们保持原来的 600s (10分钟)
         if transcription_provider == "Qwen API":
             chunk_duration_seconds = 170 
             yield "sub_progress", 0.0, f"使用 Qwen API，设置音频块时长为 {chunk_duration_seconds} 秒"
         else:
             chunk_duration_seconds = 600
             yield "sub_progress", 0.0, f"使用 Local Whisper，设置音频块时长为 {chunk_duration_seconds} 秒"
-        # --- 结束修改 ---
 
-        splitter_generator = split_media_to_audio_chunks_generator(input_path, output_dir, chunk_duration_seconds) # (修改) 使用动态时长
+        splitter_generator = split_media_to_audio_chunks_generator(input_path, output_dir, chunk_duration_seconds) 
         audio_chunks = []
         
         for event_type, val1, *val2 in splitter_generator:
@@ -173,7 +168,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                 yield "persistent_error", 0, user_friendly_error
                 return
         else:
-             # 因为你的 transcriber.py 已经处理了 API Key，这里无需再次检查
              yield "sub_progress", 1.0, f"✅ Qwen API 准备就绪。"
         # --- 结束修改 ---
 
@@ -194,7 +188,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                     }
                 elif transcription_provider == "Qwen API":
                     print("--- 开始使用 Qwen API (模型: qwen3-asr-flash) 进行转录 ---")
-                    # 你的 transcriber.py 内部会处理 Key，这里直接调用
                     future_to_index = {
                         executor.submit(transcribe_with_qwen, chunk): i
                         for i, chunk in enumerate(audio_chunks)
@@ -208,7 +201,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                     if result is not None:
                         all_transcripts[index] = result
                     else:
-                        # (修改) 提供更具体的错误信息
                         error_msg = f"转录任务未返回有效文本 (块索引: {index}, 服务: {transcription_provider})。"
                         if transcription_provider == "Qwen API":
                             error_msg += " 请检查 API Key 是否正确以及网络连接。"
@@ -220,12 +212,11 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
                     yield "sub_progress", num_transcribed / len(audio_chunks), f"正在转录... ({num_transcribed}/{len(audio_chunks)})"
 
         except Exception as e:
-            # (修改) 错误信息
             user_friendly_error = f"**音频转录失败 ({transcription_provider})**\n\n在转录时发生无法恢复的错误。\n\n**可能原因:**\n"
             if transcription_provider == "Qwen API":
                 user_friendly_error += "1. **API Key 错误**: 检查 `.env` 中的 `LLM_API_KEY` (Qwen API 正在复用此 Key) 是否正确且有效。\n2. **网络问题**: 无法连接到 DashScope API 服务。\n3. **文件问题**: 某个音频块已损坏无法处理。\n"
             else:
-                user_friendly_error += f"1. **Whisper 模型加载失败**: C确保指定的 '{whisper_model_size}' 模型文件可访问。\n2. **依赖库问题**: 确保 `openai-whisper` 及其依赖（如 PyTorch）已正确安装。\n"
+                user_friendly_error += f"1. **Whisper 模型加载失败**: 确保指定的 '{whisper_model_size}' 模型文件可访问。\n2. **依赖库问题**: 确保 `openai-whisper` 及其依赖（如 PyTorch）已正确安装。\n"
             
             user_friendly_error += f"\n**原始错误信息:**\n`{e}`"
             yield "persistent_error", 0, user_friendly_error
@@ -252,6 +243,10 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         except IOError as e:
             yield "error", 0, f"无法保存文字稿文件: {e}"
 
+        # --- (关键修改) ---
+        yield "transcript", full_transcript # 传递转录稿
+        # --- 结束修改 ---
+
         if is_video:
             current_progress += 1
             yield "progress", current_progress / total_steps, "文字稿汇总完成。"
@@ -260,7 +255,6 @@ def main_process_generator(input_path: str, dify_api_key: str, output_filename: 
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {provider_name}..."
 
         final_path = None
-        # (修改) 此处调用已更新的 run_llm_and_yield_results
         llm_gen = run_llm_and_yield_results()
         for event_type, value, *rest in llm_gen:
             if event_type == "persistent_error":
