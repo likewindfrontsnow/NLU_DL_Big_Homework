@@ -4,7 +4,13 @@ import json
 import time
 from typing import Generator, Union
 from config import LLM_CONFIG 
-from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_REFINER # (修改) 导入新
+# (TA 修改) 导入 STEM, HASS, 和 QUIZ prompts
+from prompts import (
+    PROMPT_NOTES_STEM, 
+    PROMPT_NOTES_HASS, 
+    PROMPT_QUIZ, 
+    PROMPT_NOTES_REFINER
+)
 from utils import retry 
 
 # --- (私有) 流式处理函数 (不变) ---
@@ -79,15 +85,28 @@ def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, N
             print(f"❌ API 响应结构异常: {result}")
             raise Exception("API 响应异常，未包含有效内容")
 
-# --- (修改) 原始的笔记生成函数 ---
+# --- (TA 修改) 扩展 run_llm_generation 以处理多种 query 类型 ---
 def run_llm_generation(input_text: str, query: str, stream_output: bool) -> Union[Generator[str, None, None], str]:
     """
-    (修改) 任务 1: 从转录稿 (input_text) 生成初始笔记。
+    (TA 修改) 任务 1: 根据 query 选择不同的 prompt 生成内容。
     """
-    if query == "Notes":
+    
+    # (TA 修改) 根据 query 选择对应的 Prompt
+    if query == "Notes_STEM":
         final_prompt = PROMPT_NOTES_STEM.format(source_transcript=input_text)
+    elif query == "Notes_HASS":
+        final_prompt = PROMPT_NOTES_HASS.format(source_transcript=input_text)
+    elif query == "Quiz":
+        final_prompt = PROMPT_QUIZ.format(source_transcript=input_text)
+    
+    # (TA 修改) Q&A 暂未实现
+    elif query == "Q&A":
+        # (TA 建议) 在这里抛出错误，以便在 UI 上显示“暂未实现”
+        raise ValueError(f"功能暂未实现: 'Q&A' 模式的后端逻辑尚未接入。")
+    
     else:
-        raise ValueError(f"功能暂未实现: 仅支持 'Notes' 模式。您请求的是 '{query}'。")
+        # 兜底错误
+        raise ValueError(f"收到了未知的 query 类型: '{query}'。请检查 app.py 和 llm_api.py。")
     
     messages = [
         {"role": "system", "content": final_prompt} 

@@ -27,6 +27,9 @@ if "processing_has_failed" not in st.session_state:
 # (TA 修改) 为 Qwen ASR 上下文添加 session state
 if "asr_context" not in st.session_state:
     st.session_state.asr_context = ""
+# (TA 新增) 存储最终选择的生成模式
+if "final_query" not in st.session_state:
+    st.session_state.final_query = "Notes_STEM" 
 # --- 结束新增 ---
 
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
@@ -40,12 +43,36 @@ with st.sidebar:
         value=st.session_state.output_filename
     )
 
-    query_option = st.selectbox(
+    # --- (TA 修改) 拆分为两级选择 ---
+    main_query_option = st.selectbox(
         "请选择生成内容类型:",
         ("Notes", "Q&A", "Quiz"),
         index=0,
-        help="选择 'Notes' 生成结构化笔记, 'Q&A' 生成问答对, 'Quiz' 生成测验题。(目前仅 'Notes' 功能已接入)"
+        key="main_query_option",
+        help="选择 'Notes' 生成结构化笔记, 'Q&A' 生成问答对, 'Quiz' 生成测验题。"
     )
+
+    note_type_key = "STEM" # 默认值
+    
+    # (TA 新增) 根据选择，动态显示笔记类型
+    if main_query_option == "Notes":
+        note_type_selection = st.selectbox(
+            "请选择笔记类型:",
+            ("STEM (理工科)", "HASS (人文社科)"),
+            index=0,
+            key="note_type_selector",
+            help="理工科(STEM)适用于数学、CS等。人文社科(HASS)适用于历史、文学等。"
+        )
+        # (TA 新增) 组合最终的 query
+        note_type_key = note_type_selection.split(' ')[0] # 结果 "STEM" 或 "HASS"
+        final_query = f"Notes_{note_type_key}" # 结果 "Notes_STEM" 或 "Notes_HASS"
+    else:
+        final_query = main_query_option # 结果 "Q&A" 或 "Quiz"
+    
+    # (TA 新增) 将最终选择存储在 session_state 中，以便在 Rerun 后保持一致
+    st.session_state.final_query = final_query
+    # --- 结束 TA 修改 ---
+
 
     st.markdown("---")
     st.subheader("语音转录 (ASR) 配置")
@@ -153,12 +180,15 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
     st.markdown("---")
 
     stream_status = "流式" if stream_output else "非流式"
+    
+    # (TA 修改) 更新 processing_headers 以匹配新的 query
     processing_headers = {
-        "Notes": f"正在生成笔记 ({provider_name} {stream_status})...",
-        "Q&A": "正在进行 Q&A...",
-        "Quiz": "正在生成测验..."
+        "Notes_STEM": f"正在生成笔记 (STEM, {provider_name} {stream_status})...",
+        "Notes_HASS": f"正在生成笔记 (HASS, {provider_name} {stream_status})...",
+        "Q&A": "正在进行 Q&A (暂未实现)...",
+        "Quiz": f"正在生成测验 ({provider_name} {stream_status})..."
     }
-    st.subheader(processing_headers.get(query_option, "正在处理..."))
+    st.subheader(processing_headers.get(st.session_state.final_query, "正在处理..."))
     
     if transcription_provider == "Local Whisper":
         asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
@@ -168,7 +198,8 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
         if st.session_state.asr_context:
             asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
     
-    st.info(f"笔记模式: **{query_option}** | {asr_config_text}")
+    # (TA 修改) 更新 info 框，使用 st.session_state.final_query
+    st.info(f"生成模式: **{st.session_state.final_query}** | {asr_config_text}")
     
     llm_output_container = st.empty()
     full_llm_response = ""
@@ -197,7 +228,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
         temp_file_path, 
         "DUMMY_KEY", 
         st.session_state.output_filename, 
-        query_option, 
+        st.session_state.final_query, # (TA 修改) 传入组合后的 query
         whisper_model_size,
         stream_output,
         transcription_provider,
@@ -273,91 +304,103 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
 if st.session_state.current_notes:
     
     st.markdown("---")
-    st.subheader("🎉 智能笔记")
+    
+    # (TA 修改) 根据模式显示不同标题
+    if st.session_state.final_query.startswith("Notes"):
+        st.subheader("🎉 智能笔记")
+    elif st.session_state.final_query == "Quiz":
+        st.subheader("🎉 智能测验")
+    else:
+        st.subheader("🎉 生成内容")
+
     
     # (修改) 这是笔记的唯一显示区域
     note_display_area = st.empty()
     note_display_area.markdown(st.session_state.current_notes)
         
+    download_label = "笔记" if st.session_state.final_query.startswith("Notes") else "测验"
+    
     st.download_button(
-        label=f"下载当前笔记 ({st.session_state.output_filename}.md)",
+        label=f"下载当前{download_label} ({st.session_state.output_filename}.md)",
         data=st.session_state.current_notes,
         file_name=f"{st.session_state.output_filename}.md",
         mime="text/markdown",
         use_container_width=True
     )
     
-    st.markdown("---")
-    st.subheader("✍️ 笔记精炼")
-    st.info("对当前生成的笔记不满意？请选择快捷指令或输入您的修改意见。")
+    # (TA 修改) 只有 "Notes" 模式才显示精炼 UI
+    if st.session_state.final_query.startswith("Notes"):
+        st.markdown("---")
+        st.subheader("✍️ 笔记精炼")
+        st.info("对当前生成的笔记不满意？请选择快捷指令或输入您的修改意见。")
 
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        preset_feedback = st.selectbox(
-            "快捷指令:",
-            (
-                "(请选择一个快捷指令)", 
-                "帮我总结得更简洁", 
-                "帮我扩写得更详细 (需要参考原始转录稿)", 
-                "把语气变得更生动有趣",
-                "把语气变得更专业严肃",
-                "帮我用项目符号(bullet points)重新组织"
-            )
-        )
-    
-    with col2:
-        custom_feedback = st.text_input(
-            "或输入你的自定义指令:", 
-            placeholder="例如：请重点扩写第二部分..."
-        )
-
-    if st.button("🚀 开始精炼", use_container_width=True, type="primary"):
-        feedback = custom_feedback if custom_feedback else preset_feedback
+        col1, col2 = st.columns(2)
         
-        if feedback == "(请选择一个快捷指令)" or not feedback:
-            st.warning("请输入或选择一个修改指令。")
-        elif not st.session_state.full_transcript:
-            st.error("错误：未找到原始转录稿，无法进行精炼。请重新处理文件。")
-        else:
-            st.info("正在根据您的反馈重新生成笔记...")
-            # (修改) 直接在唯一的显示区域流式输出
-            refined_notes = ""
-            
-            try:
-                regenerator = refine_llm_generation(
-                    original_transcript=st.session_state.full_transcript,
-                    current_notes=st.session_state.current_notes,
-                    user_feedback=feedback,
-                    stream_output=stream_output
+        with col1:
+            preset_feedback = st.selectbox(
+                "快捷指令:",
+                (
+                    "(请选择一个快捷指令)", 
+                    "帮我总结得更简洁", 
+                    "帮我扩写得更详细 (需要参考原始转录稿)", 
+                    "把语气变得更生动有趣",
+                    "把语气变得更专业严肃",
+                    "帮我用项目符号(bullet points)重新组织"
                 )
+            )
+        
+        with col2:
+            custom_feedback = st.text_input(
+                "或输入你的自定义指令:", 
+                placeholder="例如：请重点扩写第二部分..."
+            )
 
-                if stream_output:
-                    for chunk in regenerator:
-                        if chunk:
-                            refined_notes += chunk
-                            note_display_area.markdown(refined_notes) # 实时替换
-                else:
-                    refined_notes = regenerator
-                    note_display_area.markdown(refined_notes)
+        if st.button("🚀 开始精炼", use_container_width=True, type="primary"):
+            feedback = custom_feedback if custom_feedback else preset_feedback
+            
+            if feedback == "(请选择一个快捷指令)" or not feedback:
+                st.warning("请输入或选择一个修改指令。")
+            elif not st.session_state.full_transcript:
+                st.error("错误：未找到原始转录稿，无法进行精炼。请重新处理文件。")
+            else:
+                st.info("正在根据您的反馈重新生成笔记...")
+                # (修改) 直接在唯一的显示区域流式输出
+                refined_notes = ""
                 
-                # (关键) 用新笔记覆盖旧笔记
-                st.session_state.current_notes = refined_notes
-                
-                # (新增) 保存精炼后的笔记
                 try:
-                    save_path = f"{st.session_state.output_filename}_refined.md"
-                    with open(save_path, 'w', encoding='utf-8') as f:
-                        f.write(refined_notes)
-                    st.success(f"精炼完成！")
-                except IOError as e:
-                    st.error(f"保存精炼笔记失败: {e}")
-                
-                # (新增) 再次 Rerun 以清理“正在精炼”的提示
-                st.rerun() # <-- (修正)
+                    regenerator = refine_llm_generation(
+                        original_transcript=st.session_state.full_transcript,
+                        current_notes=st.session_state.current_notes,
+                        user_feedback=feedback,
+                        stream_output=stream_output
+                    )
 
-            except Exception as e:
-                st.error(f"精炼过程中出错: {e}")
+                    if stream_output:
+                        for chunk in regenerator:
+                            if chunk:
+                                refined_notes += chunk
+                                note_display_area.markdown(refined_notes) # 实时替换
+                    else:
+                        refined_notes = regenerator
+                        note_display_area.markdown(refined_notes)
+                    
+                    # (关键) 用新笔记覆盖旧笔记
+                    st.session_state.current_notes = refined_notes
+                    
+                    # (新增) 保存精炼后的笔记
+                    try:
+                        save_path = f"{st.session_state.output_filename}_refined.md"
+                        with open(save_path, 'w', encoding='utf-8') as f:
+                            f.write(refined_notes)
+                        st.success(f"精炼完成！")
+                    except IOError as e:
+                        st.error(f"保存精炼笔记失败: {e}")
+                    
+                    # (新增) 再次 Rerun 以清理“正在精炼”的提示
+                    st.rerun() # <-- (修正)
+
+                except Exception as e:
+                    st.error(f"精炼过程中出错: {e}")
 
 # --- (修改) 逻辑块 4: 仅在“失败”时显示重试按钮 ---
 if st.session_state.processing_has_failed:
