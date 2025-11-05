@@ -4,10 +4,9 @@ import json
 import time
 from typing import Generator, Union
 from config import LLM_CONFIG 
-from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_HASS, PROMPT_NOTES_REFINER # (TA 修改) 导入 HASS
+from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_HASS, PROMPT_NOTES_REFINER
 from utils import retry 
 
-# 处理流式响应
 def _handle_streaming_response(response: requests.Response) -> Generator[str, None, None]:
     for line in response.iter_lines():
         if not line:
@@ -32,13 +31,10 @@ def _handle_streaming_response(response: requests.Response) -> Generator[str, No
             print(f"  > (stream) 处理块时出错: {e}, 块: {line_str}")
 
 @retry(max_retries=3, delay=5, allowed_exceptions=(requests.exceptions.RequestException,))
-
-# 调用LLM API，发送消息并处理响应
 def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, None, None], str]:
-    """
-    (重构) 基础的 LLM API 调用函数。
-    它只负责发送 `messages` 列表并处理响应。
-    """
+    if not LLM_CONFIG.get('api_key'):
+        raise ValueError("API Key 未在 LLM_CONFIG 中配置。请检查 .env 文件或重启应用以输入 Key。")
+        
     api_url = LLM_CONFIG["base_url"] + "/chat/completions"
     headers = {
         "Authorization": f"Bearer {LLM_CONFIG['api_key']}", 
@@ -76,7 +72,6 @@ def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, N
             print(f"❌ API 响应结构异常: {result}")
             raise Exception("API 响应异常，未包含有效内容")
 
-# 从转录稿生成初始笔记
 def run_llm_generation(input_text: str, stream_output: bool, note_type: str) -> Union[Generator[str, None, None], str]:
     
     if note_type == "STEM":
@@ -94,9 +89,7 @@ def run_llm_generation(input_text: str, stream_output: bool, note_type: str) -> 
     
     return _call_llm_api(messages, stream_output)
 
-# 根据反馈修改当前笔记
 def refine_llm_generation(original_transcript: str, current_notes: str, user_feedback: str, stream_output: bool) -> Union[Generator[str, None, None], str]:
-    # 构建多轮对话的 messages 列表
     messages = [
         {"role": "system", "content": PROMPT_NOTES_REFINER},
         {"role": "user", "content": f"""

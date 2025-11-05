@@ -9,7 +9,6 @@ from utils import retry
 import subprocess 
 
 MODEL_STORAGE = threading.local() 
-# 线程锁，防止多线程环境下模型下载与加载冲突
 _DOWNLOAD_LOCK = threading.Lock() 
 _LOAD_LOCK = threading.Lock()     
 
@@ -50,7 +49,7 @@ def transcribe_single_audio_chunk(audio_path: str, model_name: str) -> str | Non
     if not model_loaded_correctly:
         try:
             MODEL_STORAGE.model = _load_whisper_model(model_name)
-            MODEL_STORAGE.model_name = model_name # (修改) 存储当前加载的模型名称
+            MODEL_STORAGE.model_name = model_name
         except Exception:
             return None 
 
@@ -91,8 +90,8 @@ def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str
 
     try:
         if not DASHSCOPE_API_KEY:
-            print("  > 错误: DASHSCOPE_API_KEY 未在环境中设置。")
-            return None
+            print("  > 错误: DASHSCOPE_API_KEY (LLM_API_KEY) 未在 .env 中设置。")
+            raise Exception("DASHSCOPE_API_KEY (LLM_API_KEY) 未在 .env 中设置。")
         
         if not os.path.exists(audio_path):
             raise FileNotFoundError(f"音频文件不存在: {audio_path}")
@@ -147,11 +146,4 @@ def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str
         return None
     except Exception as e:
         print(f"  > [Qwen API] 转录失败 (文件: {audio_filename}): {e}")
-        raise e 
-    
-# if __name__ == '__main__':
-#     # ... (测试代码保持不变) ...
-#     # 测试时需要提供模型名称
-#     pre_download_whisper_model("base")
-#     transcription = transcribe_with_qwen("chunk_003.mp3")
-#     print(f"\n转录结果:\n{transcription}")
+        raise e
