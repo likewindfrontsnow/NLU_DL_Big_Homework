@@ -59,3 +59,8 @@ conda create -n <your_env_name> python=3.11
 
 # 安装所需的 Python 库
 pip install -r requirements.txt
+```
+
+## 运行程序
+
+进入项目根目录，在终端中输入streamlit run app.py即可跳转到网页版应用
