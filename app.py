@@ -25,6 +25,8 @@ if "asr_context" not in st.session_state:
     st.session_state.asr_context = ""
 if "note_type" not in st.session_state:
     st.session_state.note_type = "STEM"
+if "stop_requested" not in st.session_state:
+    st.session_state.stop_requested = False
 
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
 st.info(f"💡 **提示**: 视频/音频文件将使用所选转录服务，笔记生成将调用 **{provider_name}** API。")
@@ -99,7 +101,7 @@ with st.sidebar:
     keep_temp_files = st.checkbox(
         "保留语音转文字稿", 
         value=False, 
-        help="勾选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。",
+        help="勾S选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。",
         disabled=st.session_state.processing_started
     )
 
@@ -136,7 +138,14 @@ if uploaded_file is not None and not st.session_state.processing_started and not
         st.session_state.processing_started = True
         st.rerun()
 
+def handle_stop():
+    st.session_state.stop_requested = True
+
+stop_button_placeholder = st.empty()
+
 if st.session_state.processing_started and st.session_state.current_notes is None and not st.session_state.processing_has_failed:
+    
+    stop_button_placeholder.button("⏹️ 停止生成", on_click=handle_stop, use_container_width=True)
     
     st.markdown("---")
     st.subheader("处理进度")
@@ -190,6 +199,16 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
     )
     
     for event_type, value, *rest in generator:
+        
+        if st.session_state.get("stop_requested", False):
+            st.session_state.stop_requested = False
+            st.session_state.processing_started = False
+            st.warning("处理已由用户手动停止。")
+            main_progress_text.warning("处理已停止。")
+            stop_button_placeholder.empty()
+            st.rerun()
+            break
+
         text = rest[0] if rest else ""
 
         if event_type == "progress":
@@ -212,6 +231,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             llm_output_container.error(f"**错误详情:**\n\n{text}")
             st.session_state.processing_has_failed = True 
             st.session_state.processing_started = False
+            stop_button_placeholder.empty()
             st.rerun() 
             break
         
@@ -220,6 +240,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             llm_output_container.error(text)
             st.session_state.processing_has_failed = True 
             st.session_state.processing_started = False
+            stop_button_placeholder.empty()
             st.rerun() 
             break
 
@@ -233,6 +254,7 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
             
             st.session_state.current_notes = full_llm_response
             st.session_state.processing_started = False
+            stop_button_placeholder.empty()
             
             if not keep_temp_files:
                 transcript_path = "source_transcript.txt"
@@ -339,11 +361,12 @@ if st.session_state.current_notes:
                 st.error(f"精炼过程中出错: {e}")
 
 if st.session_state.processing_has_failed:
-    st.error("上次处理失败。请检查文件或配置。")
+    st.error("处理失败。请检查文件或配置。")
     if st.button("🔄 重新开始", use_container_width=True):
         st.session_state.processing_started = False
         st.session_state.current_notes = None
         st.session_state.full_transcript = None
         st.session_state.last_uploaded_filename = None
         st.session_state.processing_has_failed = False
+        st.session_state.stop_requested = False
         st.rerun()
