@@ -3,10 +3,8 @@ import os
 import whisper
 import threading
 import dashscope
-from .. import config
 from config import LLM_API_KEY
 DASHSCOPE_API_KEY=LLM_API_KEY
-from .. import utils
 from utils import retry
 import subprocess 
 

@@ -12,7 +12,7 @@ st.markdown("上传您的视频、音频或文本文档，即可自动生成结�
 # --- (修改) 更新提示信息 ---
 # (修改) 动态显示 LLM 服务商名称
 provider_name = LLM_CONFIG.get('provider_name', 'LLM')
-st.info(f"💡 **提示**: 视频/音频文件将使用本地 Whisper 转录，笔记生成将调用 **{provider_name}** API。")
+st.info(f"💡 **提示**: 视频/音频文件将使用所选转录服务，笔记生成将调用 **{provider_name}** API。")
 
 with st.sidebar:
     st.header("⚙️ 参数配置")
@@ -26,17 +26,38 @@ with st.sidebar:
         help="选择 'Notes' 生成结构化笔记, 'Q&A' 生成问答对, 'Quiz' 生成测验题。(目前仅 'Notes' 功能已接入)"
     )
 
-    # (新) 添加 Whisper 模型大小选择
-    whisper_model_size = st.selectbox(
-        "请选择语音转录模型:",
-        ("tiny", "base", "small", "medium", "large"),
+    # --- (新增) 语音转录服务选择 ---
+    st.markdown("---")
+    st.subheader("语音转录 (ASR) 配置")
+    transcription_provider = st.radio(
+        "请选择语音转录服务:",
+        ("Local Whisper", "Qwen API"),
         index=0,
-        help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用非 'tiny' 模型时，程序会先下载模型文件（可能需要几分钟）。"
+        key="transcription_provider",
+        help="""
+        - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，无需联网。
+        - **Qwen API**: 调用阿里云 Qwen ASR API，速度快，精度可能更高，但需要联网且音频文件会被上传。
+        """
     )
+    
+    # (修改) 仅在选择 Local Whisper 时显示模型大小选择
+    whisper_model_size = "tiny" # 默认值
+    if transcription_provider == "Local Whisper":
+        whisper_model_size = st.selectbox(
+            "请选择 Whisper 模型:",
+            ("tiny", "base", "small", "medium", "large"),
+            index=0,
+            help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用非 'tiny' 模型时，程序会先下载模型文件（可能需要几分钟）。"
+        )
+    else:
+        st.info("Qwen API 将使用 qwen3-asr-flash 模型。")
+    # --- 结束新增/修改 ---
+
 
     # --- (新增) 添加流式输出开关 ---
+    st.markdown("---")
     stream_output = st.toggle(
-        "启用流式输出", 
+        "启用笔记流式输出", 
         value=True, 
         help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。"
     )
@@ -51,6 +72,7 @@ with st.sidebar:
 
     st.info("请在上方配置好参数后，上传文件开始处理。")
 
+# ... (文件格式定义保持不变) ...
 video_exts = {'mp4', 'mov','mpeg','webm'}
 audio_exts = {'mp3','m4a','wav','amr','mpga'}
 doc_exts = {'txt','md','mdx','markdown','pdf','html','xlsx','xls','doc','docx','csv','eml','msg','pptx','ppt','xml','epub'}
@@ -89,10 +111,17 @@ if uploaded_file is not None:
             "Quiz": "正在生成测验..."
         }
         st.subheader(processing_headers.get(query_option, "正在处理..."))
-        st.info(f"当前生成模式: **{query_option}** (转录模型: **{whisper_model_size}**)")
+        
+        # (修改) 显示更详细的 ASR 配置
+        if transcription_provider == "Local Whisper":
+            asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
+        else:
+            asr_config_text = "转录服务: **Qwen API** (模型: **qwen3-asr-flash**)"
+        
+        st.info(f"笔记模式: **{query_option}** | {asr_config_text}")
         # --- 结束修改 ---
         
-        classification_display = st.empty() # (保留占位，但不再使用)
+        classification_display = st.empty() 
         llm_output_container = st.empty()
         full_llm_response = ""
         
@@ -106,14 +135,15 @@ if uploaded_file is not None:
         with open(temp_file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-        # (修改) 将 whisper_model_size 和 stream_output 传递给主进程
+        # (修改) 将 whisper_model_size, stream_output 和 transcription_provider 传递给主进程
         generator = main_process_generator(
             temp_file_path, 
-            "DUMMY_KEY", 
+            "DUMMY_KEY", # DUMMY_KEY 似乎未被使用，但我们保留它以匹配签名
             output_filename, 
             query_option, 
             whisper_model_size,
-            stream_output # <-- 新增参数
+            stream_output,
+            transcription_provider # <-- 新增参数
         )
         
         for event_type, value, *rest in generator:
