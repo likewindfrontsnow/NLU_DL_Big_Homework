@@ -8,7 +8,8 @@ from llm_api import refine_llm_generation
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
-st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记、Q&A 或测验。")
+# (TA 修改) 移除 Q&A 和 Quiz
+st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
 
 # --- (新增) Session State 初始化 ---
 # 用于在重新运行 (rerun) 之间保持状态
@@ -40,13 +41,8 @@ with st.sidebar:
         value=st.session_state.output_filename
     )
 
-    query_option = st.selectbox(
-        "请选择生成内容类型:",
-        ("Notes", "Q&A", "Quiz"),
-        index=0,
-        help="选择 'Notes' 生成结构化笔记, 'Q&A' 生成问答对, 'Quiz' 生成测验题。(目前仅 'Notes' 功能已接入)"
-    )
-
+    # (TA 修改) 完整移除了 query_option (Q&A / Quiz) 的选择框
+    
     st.markdown("---")
     st.subheader("语音转录 (ASR) 配置")
     transcription_provider = st.radio(
@@ -153,12 +149,8 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
     st.markdown("---")
 
     stream_status = "流式" if stream_output else "非流式"
-    processing_headers = {
-        "Notes": f"正在生成笔记 ({provider_name} {stream_status})...",
-        "Q&A": "正在进行 Q&A...",
-        "Quiz": "正在生成测验..."
-    }
-    st.subheader(processing_headers.get(query_option, "正在处理..."))
+    # (TA 修改) 移除了 processing_headers 字典，直接使用固定标题
+    st.subheader(f"正在生成笔记 ({provider_name} {stream_status})...")
     
     if transcription_provider == "Local Whisper":
         asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
@@ -168,7 +160,8 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
         if st.session_state.asr_context:
             asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
     
-    st.info(f"笔记模式: **{query_option}** | {asr_config_text}")
+    # (TA 修改) 移除了 query_option
+    st.info(f"{asr_config_text}")
     
     llm_output_container = st.empty()
     full_llm_response = ""
@@ -192,12 +185,11 @@ if st.session_state.processing_started and st.session_state.current_notes is Non
          st.session_state.processing_started = False
          st.rerun() # <-- (修正)
 
-
+    # (TA 修改) 移除了 generator 调用的 query_option 参数
     generator = main_process_generator(
         temp_file_path, 
         "DUMMY_KEY", 
         st.session_state.output_filename, 
-        query_option, 
         whisper_model_size,
         stream_output,
         transcription_provider,

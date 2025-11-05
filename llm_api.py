@@ -79,15 +79,14 @@ def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, N
             print(f"❌ API 响应结构异常: {result}")
             raise Exception("API 响应异常，未包含有效内容")
 
-# --- (修改) 原始的笔记生成函数 ---
-def run_llm_generation(input_text: str, query: str, stream_output: bool) -> Union[Generator[str, None, None], str]:
+# --- (TA 修改) 笔记生成函数 (移除 query 参数) ---
+def run_llm_generation(input_text: str, stream_output: bool) -> Union[Generator[str, None, None], str]:
     """
-    (修改) 任务 1: 从转录稿 (input_text) 生成初始笔记。
+    (修改) 任务 1: 从转录稿 (input_text) 生成初始笔记。 (已移除 query 参数)
     """
-    if query == "Notes":
-        final_prompt = PROMPT_NOTES_STEM.format(source_transcript=input_text)
-    else:
-        raise ValueError(f"功能暂未实现: 仅支持 'Notes' 模式。您请求的是 '{query}'。")
+    
+    # (TA 修改) 移除 if query == "Notes": 检查，因为现在这是唯一功能
+    final_prompt = PROMPT_NOTES_STEM.format(source_transcript=input_text)
     
     messages = [
         {"role": "system", "content": final_prompt} 
