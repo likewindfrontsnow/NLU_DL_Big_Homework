@@ -10,7 +10,7 @@ def get_media_duration(media_path: str) -> float | None:
     """使用 ffprobe 获取媒体文件总时长（秒），适用于视频和音频。"""
     command = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', media_path]
     try:
-        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return float(result.stdout)
     except FileNotFoundError:
         print("错误：找不到 'ffprobe' 命令。请确保 FFmpeg 已经完全安装，并且其 bin 目录已添加到了系统的 PATH 环境变量中。")
@@ -40,7 +40,7 @@ def _process_chunk(args) -> str | None:
     
     try:
         print(f"开始生成第 {i+1}/{num_chunks} 个音频块: {output_filename}")
-        subprocess.run(command, check=True, capture_output=True, text=True)
+        subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         print(f"完成生成第 {i+1}/{num_chunks} 个音频块。")
         return output_filename
     except subprocess.CalledProcessError as e:
