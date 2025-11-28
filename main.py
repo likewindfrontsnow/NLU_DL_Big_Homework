@@ -10,7 +10,7 @@ from video_processor.transcriber import transcribe_single_audio_chunk, pre_downl
 from llm_api import run_llm_generation, refine_llm_generation 
 
 # 生成器函数，处理流程并实时产出进度与LLM文本块
-def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None): 
+def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None, additional_instructions: str = ""): 
     # 一些初始化工作
     output_dir = "output_chunks"
     final_notes_save_path = f"{output_filename}.md"
@@ -35,7 +35,7 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
             yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status}, 类型: {note_type})..."
             
             # 转录稿full_transcript传输给llm生成笔记
-            llm_call_result = run_llm_generation(full_transcript, stream_output, note_type)
+            llm_call_result = run_llm_generation(full_transcript, stream_output, note_type, additional_instructions)
             
             if stream_output:
                 for chunk in llm_call_result:

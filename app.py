@@ -163,6 +163,40 @@ else:
             disabled=is_busy
         )
 
+        st.markdown("---")
+        with st.expander("🎨 个性化定制 (生成前)", expanded=False):
+            st.markdown("在这里添加对笔记生成的特殊要求。")
+            
+            instruction_options = [
+                "请尤其注意老师提到的与考试相关的部分"
+                "请将所有专业术语中英文对照列出",
+                "请使用更多的表格来对比易混淆的概念",
+                "语气要更加幽默风趣，像个老朋友在聊天",
+                "只保留核心考点，极度精简，不要废话",
+                "为每个章节添加 emoji 图标，增加可读性",
+                "请详细解释所有缩写词 (Abbreviations)"
+            ]
+            
+            selected_instructions = st.multiselect(
+                "快捷指令 (多选):",
+                instruction_options,
+                key="selected_instructions_ui",
+                disabled=is_busy
+            )
+            
+            custom_instruction_text = st.text_area(
+                "自定义额外要求:",
+                placeholder="例如：请重点关注药理学部分，特别是副作用...",
+                key="custom_instruction_text_ui",
+                disabled=is_busy
+            )
+
+        final_custom_instructions = ""
+        if selected_instructions:
+            final_custom_instructions += "、".join(selected_instructions) + "。\n"
+        if custom_instruction_text:
+            final_custom_instructions += custom_instruction_text
+
         st.info("请在上方配置好参数后，上传文件开始处理。")
 
     video_exts = {'mp4', 'mov','mpeg','webm'}
@@ -262,7 +296,8 @@ else:
             stream_output,
             transcription_provider,
             st.session_state.note_type, 
-            st.session_state.asr_context
+            st.session_state.asr_context,
+            final_custom_instructions
         )
         
         for event_type, value, *rest in generator:
