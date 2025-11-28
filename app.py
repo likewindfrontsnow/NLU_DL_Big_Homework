@@ -91,14 +91,20 @@ else:
             value=st.session_state.output_filename,
             disabled=is_busy
         )
-        
+
+        note_type_mapping = {
+            "STEM": "理工科",
+            "HASS": "人文社科",
+            "Medical": "医学"
+        }
+
         note_type_option = st.radio(
             "请选择笔记类型:",
             ("STEM", "HASS","Medical"),
             index=0, 
             key="note_type", 
             horizontal=True,
-            help="STEM: 数理工程 | HASS: 人文社科 | Medical: 临床/基础医学",
+            format_func=lambda x: note_type_mapping.get(x, x),
             disabled=is_busy
         )
 
@@ -106,7 +112,7 @@ else:
         st.subheader("语音转录 (ASR) 配置")
         transcription_provider = st.radio(
             "请选择语音转录服务:",
-            ("Local Whisper", "Qwen API"),
+            ("Qwen API","Local Whisper"),
             index=0,
             key="transcription_provider",
             help="""
