@@ -4,7 +4,7 @@ import json
 import time
 from typing import Generator, Union
 from config import LLM_CONFIG 
-from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_HASS, PROMPT_NOTES_REFINER
+from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_HASS, PROMPT_NOTES_REFINER,PROMPT_NOTES_MEDICAL
 from utils import retry 
 
 def _handle_streaming_response(response: requests.Response) -> Generator[str, None, None]:
@@ -77,6 +77,9 @@ def run_llm_generation(input_text: str, stream_output: bool, note_type: str) -> 
     if note_type == "STEM":
         prompt_template = PROMPT_NOTES_STEM
         print("  > 使用 STEM (理工科) Prompt")
+    elif note_type == "Medical":
+        prompt_template = PROMPT_NOTES_MEDICAL
+        print("  > 使用 Medical (医学) Prompt")
     else: 
         prompt_template = PROMPT_NOTES_HASS
         print("  > 使用 HASS (人文社科) Prompt")

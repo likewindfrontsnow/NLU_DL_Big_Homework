@@ -94,11 +94,11 @@ else:
         
         note_type_option = st.radio(
             "请选择笔记类型:",
-            ("STEM", "HASS"),
+            ("STEM", "HASS","Medical"),
             index=0, 
             key="note_type", 
             horizontal=True,
-            help="STEM (理工科) 适用于数学/代码/科学。HASS (人文社科) 适用于历史/文学/社会学。",
+            help="STEM: 数理工程 | HASS: 人文社科 | Medical: 临床/基础医学",
             disabled=is_busy
         )
 
