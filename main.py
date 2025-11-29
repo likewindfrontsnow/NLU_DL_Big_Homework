@@ -13,13 +13,27 @@ from llm_api import run_llm_generation, refine_llm_generation
 def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None, additional_instructions: str = ""): 
     # 一些初始化工作
     temp_root="temp"
+    output_dir = os.path.join(temp_root, "output_chunks")
+
+    if os.path.exists(output_dir):
+        try:
+            shutil.rmtree(output_dir) 
+            time.sleep(0.5)          
+        except OSError as e:
+            print(f"警告：无法清理旧的临时文件夹: {e}")
+
     if not os.path.exists(temp_root):
         os.makedirs(temp_root)
     
-    output_dir = os.path.join(temp_root, "output_chunks")
-    transcript_save_path = os.path.join(temp_root, "source_transcript.txt")
     final_notes_save_path = f"{output_filename}.md"
-    
+
+    transcript_save_path = os.path.join(temp_root, "source_transcript.txt")
+    if os.path.exists(transcript_save_path):
+        try:
+            os.remove(transcript_save_path)
+        except OSError:
+            pass
+        
     video_exts = {'.mp4', '.mov', '.mpeg', '.webm'}
     audio_exts = {'.mp3', '.m4a', '.wav', '.amr', '.mpga'}
     text_exts = {'.txt', '.md', '.mdx', '.markdown', '.pdf', '.html', '.xlsx', '.xls', '.doc', '.docx', '.csv', '.eml', '.msg', '.pptx', '.ppt', '.xml', '.epub'}

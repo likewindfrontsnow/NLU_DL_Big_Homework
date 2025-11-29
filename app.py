@@ -230,6 +230,12 @@ else:
     if uploaded_file is not None and not is_busy and not st.session_state.processing_has_failed:
         if st.button("开始生成", use_container_width=True, type="primary"):
             st.session_state.processing_started = True
+            st.session_state.current_notes = None       
+            st.session_state.full_transcript = None     
+            st.session_state.processing_has_failed = False
+            st.session_state.stop_requested = False
+            st.session_state.refinement_in_progress = False
+            st.session_state.refinement_stop_requested = False
             st.rerun()
 
     def handle_stop():
