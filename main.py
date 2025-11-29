@@ -12,7 +12,12 @@ from llm_api import run_llm_generation, refine_llm_generation
 # 生成器函数，处理流程并实时产出进度与LLM文本块
 def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None, additional_instructions: str = ""): 
     # 一些初始化工作
-    output_dir = "output_chunks"
+    temp_root="temp"
+    if not os.path.exists(temp_root):
+        os.makedirs(temp_root)
+    
+    output_dir = os.path.join(temp_root, "output_chunks")
+    transcript_save_path = os.path.join(temp_root, "source_transcript.txt")
     final_notes_save_path = f"{output_filename}.md"
     
     video_exts = {'.mp4', '.mov', '.mpeg', '.webm'}
@@ -217,7 +222,6 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
         
         full_transcript = "\n\n".join(filter(None, all_transcripts))
         
-        transcript_save_path = "source_transcript.txt"
         try:
             with open(transcript_save_path, 'w', encoding='utf-8') as f:
                 f.write(full_transcript)

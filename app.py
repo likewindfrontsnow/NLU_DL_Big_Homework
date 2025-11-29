@@ -275,7 +275,8 @@ else:
         
         final_result_path = None
         
-        temp_dir = "temp_uploads"
+        temp_root = "temp"
+        temp_dir = os.path.join(temp_root, "uploads")
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
         temp_file_path = os.path.join(temp_dir, st.session_state.last_uploaded_filename)
@@ -363,7 +364,7 @@ else:
                 stop_button_placeholder.empty()
                 
                 if not keep_temp_files:
-                    transcript_path = "source_transcript.txt"
+                    transcript_path = os.path.join("temp", "source_transcript.txt")
                     try:
                         if os.path.exists(transcript_path):
                             os.remove(transcript_path)
