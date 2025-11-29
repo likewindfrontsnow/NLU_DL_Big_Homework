@@ -14,6 +14,8 @@ def _save_key(key):
     env_path = ".env"
     set_key(env_path, "LLM_API_KEY", key)
     set_key(env_path, "DASHSCOPE_API_KEY", key)
+    os.environ["LLM_API_KEY"] = key
+    os.environ["DASHSCOPE_API_KEY"] = key
     LLM_CONFIG["api_key"] = key
     if not LLM_CONFIG.get("provider_name"):
         LLM_CONFIG["provider_name"] = "DashCope(Qwen)"

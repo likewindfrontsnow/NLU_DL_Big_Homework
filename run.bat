@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-title 智能笔记 Agent - 通用启动器
+title Intelligent Note Agent - Launcher
 
 set "VENV_NAME=llm_video_to_note"
 
@@ -9,7 +9,7 @@ set PYTHONIOENCODING=utf-8
 set PYTHONLEGACYWINDOWSSTDIO=utf-8
 
 echo ========================================================
-echo        正在初始化智能笔记 Agent...
+echo        Initializing Intelligent Note Agent...
 echo ========================================================
 echo.
 
@@ -19,7 +19,7 @@ if exist "%VENV_NAME%\Scripts\python.exe" (
     goto :InstallDeps
 )
 
-echo [Setup] First time setup / 正在为您配置运行环境...
+echo [Setup] First time setup / Configuring environment...
 
 py -3 --version >nul 2>&1
 if %errorlevel% equ 0 (
@@ -36,7 +36,7 @@ if %errorlevel% equ 0 (
 )
 
 echo.
-echo [ERROR] Python not found! Please install Python 3.10+
+echo [ERROR] Python not found! Please install Python 3.10+ and add to PATH.
 pause
 exit /b
 
@@ -57,8 +57,6 @@ echo.
 echo ========================================================
 echo [2/3] Installing dependencies...
 echo       (Please wait, downloading AI models may take time)
-echo.
-echo       正在安装依赖库，请耐心等待...
 echo ========================================================
 echo.
 
@@ -73,7 +71,7 @@ if exist "bin" (
 
 :RunApp
 echo.
-echo [3/3] Starting App... / 正在启动...
+echo [3/3] Starting App...
 echo --------------------------------------------------------
 
 "%TARGET_PYTHON%" -m streamlit run app.py

@@ -3,8 +3,7 @@ import os
 import whisper
 import threading
 import dashscope
-from config import LLM_API_KEY
-DASHSCOPE_API_KEY=LLM_API_KEY
+from config import LLM_CONFIG
 from utils import retry
 import subprocess 
 
@@ -83,13 +82,14 @@ QWEN_RETRY_EXCEPTIONS = (
 
 @retry(max_retries=3, delay=5, allowed_exceptions=QWEN_RETRY_EXCEPTIONS)
 def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str | None:
+    current_api_key = os.getenv("DASHSCOPE_API_KEY") or LLM_CONFIG.get("api_key")
     audio_filename = os.path.basename(audio_path)
     print(f"  > [Qwen API] 正在提交: {audio_filename} (线程: {threading.current_thread().name})")
     if asr_context:
         print(f"  > [Qwen API] 使用上下文增强: {asr_context[:50]}...")
 
     try:
-        if not DASHSCOPE_API_KEY:
+        if not current_api_key:
             print("  > 错误: DASHSCOPE_API_KEY (LLM_API_KEY) 未在 .env 中设置。")
             raise Exception("DASHSCOPE_API_KEY (LLM_API_KEY) 未在 .env 中设置。")
         
@@ -117,7 +117,7 @@ def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str
         dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
 
         response = dashscope.MultiModalConversation.call(
-            api_key=DASHSCOPE_API_KEY,
+            api_key=current_api_key,
             model="qwen3-asr-flash", 
             messages=messages,
             result_format="message", 
