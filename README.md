@@ -2,7 +2,7 @@
 
 这是一个功能强大的内容处理 Agent，旨在将视频、音频或文本文档自动转换为结构化、高质量的 Markdown 笔记。
 
-本应用集成了一个 Streamlit 交互界面，允许用户上传文件，选择不同的处理引擎（本地 Whisper 或 Qwen ASR），并根据内容类型（理工科 STEM 或 人文社科 HASS）调用大语言模型（LLM）生成深度定制的笔记。
+本应用集成了一个 Streamlit 交互界面，允许用户上传文件，选择不同的处理引擎（本地 Whisper 或 Qwen ASR），并根据内容类型（理工科STEM、 人文社科HASS或医学Medical）调用大语言模型（LLM）生成深度定制的笔记。
 
 ## 核心功能
 
@@ -15,8 +15,6 @@
     * **Qwen API**: 调用阿里云 DashScope 提供的 `qwen3-asr-flash` 模型，速度快、精度高。
 * **ASR 上下文增强**: 在使用 Qwen API 时，可提供“热词”（如专业术语、人名）来显著提升特定词汇的识别准确率。
 * **智能笔记生成**: 利用配置的大语言模型（LLM）将转录稿或文本文档处理成笔记：
-    * **STEM (理工科)**: 专为数学、代码、科学内容优化，注重公式、定义和逻辑推导 (使用 `PROMPT_NOTES_STEM`)。
-    * **HASS (人文社科)**: 专为历史、文学、社会学内容优化，注重保留论点、案例和叙事流 (使用 `PROMPT_NOTES_HASS`)。
 * **笔记精炼 (Refine)**: 支持对已生成的笔记进行迭代修改。用户可以提出“更简洁”、“更详细”或自定义指令，Agent 将结合原始转录稿重新生成笔记。
 * **实时流式输出**: 在生成和精炼笔记时，支持流式（Streaming）输出，内容逐字显示，提供即时反馈。
 * **配置验证**: 提供 `api_verifier.py` 脚本，用于在运行前检查 API 密钥和网络连通性。
@@ -30,37 +28,14 @@
 * **LLM API**: `requests` (兼容 OpenAI 格式的 API), `dashscope`
 * **配置管理**: `python-dotenv`
 
-## 安装与配置
+## 安装步骤
 
-### 1. 先决条件：安装 FFmpeg
+### 1、安装python
 
-本项目依赖 `ffmpeg` 和 `ffprobe` 来处理视频和音频文件。你必须在你的系统环境中安装它。
+在python官网下载即可，建议版本>=3.10
 
-* **Windows**: 下载 `ffmpeg` 并将其 `bin` 目录添加到系统环境变量 `PATH` 中。
-* **MacOS (使用 Homebrew)**: `brew install ffmpeg`
-* **Linux (Ubuntu)**: `sudo apt update && sudo apt install ffmpeg`
+### 2、运行run.bat文件
 
-安装完成后，在终端输入 `ffmpeg -version` 和 `ffprobe -version` 检查是否安装成功。
+运行该文件后，所有安装过程一步完成
 
-### 2. 克隆并安装需要的python库
-
-将压缩包解压到本地
-
-```bash
-# (推荐) 创建并激活虚拟环境
-python -m venv venv
-source venv/bin/activate  # (Windows: venv\Scripts\activate)
-
-如果你倾向于使用anaconda，可以
-conda create -n <your_env_name> python=3.11
-(版本可以自定，建议>3.10)
-使用conda activate <your_env_name>来激活虚拟环境
-使用conda deactivate退出当前虚拟环境
-
-# 安装所需的 Python 库
-pip install -r requirements.txt
-```
-
-## 运行程序
-
-进入项目根目录，在终端中输入streamlit run app.py即可跳转到网页版应用
+首次使用streamlit会提示输入邮箱，随便输一个即可，之后会跳转到网页版应用界面
