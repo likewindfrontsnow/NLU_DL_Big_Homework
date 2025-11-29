@@ -5,10 +5,19 @@ import math
 import concurrent.futures
 from utils import retry 
 
+def _get_binary_path(binary_name: str) -> str:
+    local_bin = os.path.join(os.getcwd(), "bin", binary_name + ".exe")
+    
+    if os.path.exists(local_bin):
+        return local_bin
+    
+    return binary_name
+
 # 获取媒体文件总时长
 def get_media_duration(media_path: str) -> float | None:
     """使用 ffprobe 获取媒体文件总时长（秒），适用于视频和音频。"""
-    command = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', media_path]
+    ffprobe_cmd = _get_binary_path("ffprobe")
+    command = [ffprobe_cmd, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', media_path]
     try:
         result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return float(result.stdout)
@@ -29,9 +38,9 @@ def _process_chunk(args) -> str | None:
     media_path, output_dir, chunk_duration, i, num_chunks = args
     start_time = i * chunk_duration
     output_filename = os.path.join(output_dir, f"chunk_{i+1:03d}.mp3")
-    
+    ffmpeg_cmd = _get_binary_path("ffmpeg")
     command = [
-        'ffmpeg', '-i', media_path, 
+        ffmpeg_cmd, '-i', media_path, 
         '-ss', str(start_time), 
         '-t', str(chunk_duration), 
         '-vn', '-acodec', 'libmp3lame', 
