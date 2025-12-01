@@ -134,8 +134,8 @@ def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str
                     print(f"  > ✅ [Qwen API] 文件 '{audio_filename}' 转录成功！")
                     return transcription
             
-            print(f"  > 错误 [Qwen API]: API 响应成功，但在 content 中未找到 'text'。 响应: {response}")
-            return None
+            print(f"  > ⚠️ [Qwen API] 文件 '{audio_filename}' 未检测到有效语音 (视为静音/背景音)，跳过。")
+            return ""
         else:
             print(f"  > 错误 [Qwen API]: API 调用失败 (文件: {audio_filename})。")
             print(f"  > 状态码: {response.status_code}, 响应: {response}")
