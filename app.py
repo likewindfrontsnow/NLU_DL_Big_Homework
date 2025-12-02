@@ -9,6 +9,7 @@ from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS
 from llm_api import refine_llm_generation
 from api_verifier import check_api_connectivity 
 from dotenv import set_key
+from model_verifier import verify_llm_model, verify_asr_model
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
@@ -198,6 +199,45 @@ else:
             )
 
         st.markdown("---")
+
+        if st.button("🔍 检测模型连通性 (Check Availability)", disabled=is_busy, use_container_width=True):
+            
+            current_api_key = os.getenv("DASHSCOPE_API_KEY") or LLM_CONFIG.get("api_key")
+            current_base_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            
+            if not current_api_key:
+                st.error("❌ 未检测到 API Key，请先在上一步输入并保存。")
+            else:
+                with st.status("正在检测服务连通性...", expanded=True) as status:
+                    
+                    st.write(f"正在连接 LLM: **{selected_llm_model}** ...")
+                    llm_ok, llm_msg = verify_llm_model(current_api_key, current_base_url, selected_llm_model)
+                    
+                    if llm_ok:
+                        st.write(f":green[{llm_msg}]")
+                    else:
+                        st.write(f":red[{llm_msg}]")
+
+                    asr_ok = True 
+                    if transcription_provider == "Qwen API":
+                        st.write(f"正在连接 ASR: **{qwen_asr_model}** ...")
+                        asr_ok, asr_msg = verify_asr_model(current_api_key, qwen_asr_model)
+                        if asr_ok:
+                            st.write(f":green[{asr_msg}]")
+                        else:
+                            st.write(f":red[{asr_msg}]")
+                    else:
+                        st.write(f"ASR 服务选定为 **Local Whisper**，跳过云端验证。")
+
+                    if llm_ok and asr_ok:
+                        status.update(label="✅ 所有服务连接正常！", state="complete", expanded=False)
+                        st.toast("✅ 模型连通性检测通过！", icon="🎉")
+                    else:
+                        status.update(label="❌ 检测到服务连接问题", state="error", expanded=True)
+                        st.error("请检查报错信息，确认 API Key 余额或模型名称是否正确。")
+
+        st.markdown("---")
+        
         stream_output = st.toggle(
             "启用笔记流式输出", 
             value=True, 
