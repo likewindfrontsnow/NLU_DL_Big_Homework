@@ -5,7 +5,7 @@ import time
 import io
 from contextlib import redirect_stdout
 from main import main_process_generator
-from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT
+from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS
 from llm_api import refine_llm_generation
 from api_verifier import check_api_connectivity 
 from dotenv import set_key
@@ -190,21 +190,13 @@ else:
         if transcription_provider == "Qwen API":
             st.markdown("---")
             st.subheader("ASR 上下文增强 (Qwen)")
-
-            if qwen_asr_model in ASR_MODELS_WITH_CONTEXT_SUPPORT:
-                st.session_state.asr_context = st.text_area(
-                    "输入热词 (用于提升 ASR 准确率)",
-                    value=st.session_state.asr_context,
-                    placeholder="例如: Bulge Bracket, Boutique, 投行...",
-                    help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。",
-                    disabled=is_busy
-                )
-            else:
-                if st.session_state.asr_context != "":
-                    st.session_state.asr_context = ""
-                
-                st.info(f"🚫 当前模型 **{qwen_asr_model}** 不支持上下文/热词增强。")
-                st.caption("ℹ️ 如需使用此功能，请切换至 `qwen3-asr-flash` 或 `qwen-audio` 系列模型。")
+            st.session_state.asr_context = st.text_area(
+                "输入热词 (用于提升 ASR 准确率)",
+                value=st.session_state.asr_context,
+                placeholder="例如: Bulge Bracket, Boutique, 投行...",
+                help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。",
+                disabled=is_busy
+            )
 
         st.markdown("---")
 
@@ -245,7 +237,7 @@ else:
                         st.error("请检查报错信息，确认 API Key 余额或模型名称是否正确。")
 
         st.markdown("---")
-
+        
         stream_output = st.toggle(
             "启用笔记流式输出", 
             value=True, 

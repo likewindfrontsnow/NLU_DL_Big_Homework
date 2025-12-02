@@ -53,13 +53,6 @@ SUPPORTED_ASR_MODELS = [
     "paraformer-realtime-v1",
 ]
 
-ASR_MODELS_WITH_CONTEXT_SUPPORT = [
-    "qwen3-asr-flash",
-    "qwen3-asr-flash-filetrans",
-    "qwen3-omni-30b-a3b-captioner",
-    "qwen-audio-turbo-latest",
-    "qwen-audio-asr-latest",
-]
 
 LLM_CONFIG = {
     "provider_name": LLM_PROVIDER_NAME,
