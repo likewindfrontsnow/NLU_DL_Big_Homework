@@ -2,9 +2,12 @@
 import streamlit as st
 import os
 import time
+import io
+from contextlib import redirect_stdout
 from main import main_process_generator
 from config import LLM_CONFIG 
-from llm_api import refine_llm_generation 
+from llm_api import refine_llm_generation
+from api_verifier import check_api_connectivity 
 from dotenv import set_key
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
@@ -40,10 +43,32 @@ if not LLM_CONFIG.get("api_key"):
     
     if st.button("保存并开始", use_container_width=True, type="primary"):
         if new_key and new_key.startswith("sk-"):
-            _save_key(new_key)
-            st.success("API Key 已保存！正在重启应用...")
-            time.sleep(1)
-            st.rerun()
+            st.info("正在连接服务器验证 Key 的有效性，请稍候...")
+            test_config = LLM_CONFIG.copy()
+            test_config["api_key"] = new_key
+            if not test_config.get("provider_name"):
+                 test_config["provider_name"] = "DashScope(Qwen)"
+            log_capture_string = io.StringIO()
+            is_valid = False
+            
+            try:
+                with redirect_stdout(log_capture_string):
+                    is_valid = check_api_connectivity(test_config)
+            except Exception as e:
+                log_capture_string.write(f"\n❌ 验证过程发生意外错误: {e}")
+            
+            validation_log = log_capture_string.getvalue() 
+
+            if is_valid:
+                _save_key(new_key)
+                st.success("✅ API Key 验证通过并已保存！正在重启应用...")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("❌ 验证失败：无法连接到 API 或 Key 无效。")
+                with st.expander("查看详细错误日志 (Debug Info)", expanded=True):
+                    st.text(validation_log)
+                    st.markdown("👉 **请检查您的网络连接，或确认 Key 是否已过期。**")
         else:
             st.error("Key 格式不正确。它应该以 `sk-` 开头。")
 

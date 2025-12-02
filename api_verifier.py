@@ -1,18 +1,7 @@
-# check_api.py
+# api_verifier.py
 import requests
 import sys
-
-try:
-    from config import LLM_CONFIG
-except ImportError:
-    print("❌ 错误：无法找到 'config.py' 文件。")
-    print("   请确保 'config.py' 存在于同一目录下。")
-    sys.exit(1)
-except ValueError as e:
-    print(f"❌ 配置加载错误: {e}")
-    print("   请检查你的 .env 文件是否已正确设置 LLM_API_KEY, LLM_BASE_URL, 和 LLM_MODEL。")
-    sys.exit(1)
-
+from config import LLM_CONFIG
 
 def check_api_connectivity(config: dict) -> bool:
     print("--- 正在检测 API 连通性与密钥有效性 ---")
@@ -98,8 +87,8 @@ def check_api_connectivity(config: dict) -> bool:
         print(f"❌ 发生未知错误: {e}")
         return False
 
-if __name__ == "__main__":
-    if check_api_connectivity(LLM_CONFIG):
-        print("\nAPI 验证通过。")
-    else:
-        print("\nAPI 验证失败，请在继续前修正 API 配置。")
+# if __name__ == "__main__":
+#     if check_api_connectivity(LLM_CONFIG):
+#         print("\nAPI 验证通过。")
+#     else:
+#         print("\nAPI 验证失败，请在继续前修正 API 配置。")
