@@ -10,7 +10,7 @@ from video_processor.transcriber import transcribe_single_audio_chunk, pre_downl
 from llm_api import run_llm_generation, refine_llm_generation 
 
 # 生成器函数，处理流程并实时产出进度与LLM文本块
-def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None, additional_instructions: str = ""): 
+def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None, additional_instructions: str = "",qwen_asr_model:str="qwen3-asr-flash"): 
     # 一些初始化工作
     temp_root="temp"
     output_dir = os.path.join(temp_root, "output_chunks")
@@ -190,7 +190,7 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
                 elif transcription_provider == "Qwen API":
                     print("--- 开始使用 Qwen API (模型: qwen3-asr-flash) 进行转录 ---")
                     future_to_index = {
-                        executor.submit(transcribe_with_qwen, chunk, asr_context): i
+                        executor.submit(transcribe_with_qwen, chunk, asr_context,qwen_asr_model): i
                         for i, chunk in enumerate(audio_chunks)
                     }
 

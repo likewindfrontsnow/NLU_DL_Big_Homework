@@ -5,7 +5,7 @@ import time
 import io
 from contextlib import redirect_stdout
 from main import main_process_generator
-from config import LLM_CONFIG 
+from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS
 from llm_api import refine_llm_generation
 from api_verifier import check_api_connectivity 
 from dotenv import set_key
@@ -113,6 +113,21 @@ else:
     with st.sidebar:
         st.header("⚙️ 参数配置")
 
+        current_llm_model = LLM_CONFIG.get("model", "qwen-plus")
+        try:
+            llm_index = SUPPORTED_LLM.index(current_llm_model)
+        except ValueError:
+            llm_index = 0
+            
+        selected_llm_model = st.selectbox(
+            "请选择笔记生成模型 (LLM):",
+            SUPPORTED_LLM,
+            index=llm_index,
+            disabled=is_busy,
+            help="选择用于生成笔记的大语言模型。"
+        )
+        LLM_CONFIG["model"] = selected_llm_model
+
         st.session_state.output_filename = st.text_input(
             "请输入希望的笔记文件名 (无需后缀)", 
             value=st.session_state.output_filename,
@@ -150,6 +165,8 @@ else:
         )
         
         whisper_model_size = "tiny" 
+        qwen_asr_model = "qwen3-asr-flash"
+        
         if transcription_provider == "Local Whisper":
             whisper_model_size = st.selectbox(
                 "请选择 Whisper 模型:",
@@ -161,7 +178,13 @@ else:
             if st.session_state.asr_context != "":
                 st.session_state.asr_context = "" 
         else:
-            st.info("Qwen API 将使用 qwen3-asr-flash 模型。")
+            qwen_asr_model = st.selectbox(
+                "请选择 Qwen ASR 模型:",
+                SUPPORTED_ASR_MODELS,
+                index=0,
+                disabled=is_busy,
+                help="选择用于语音转录的模型。"
+            )
         
         if transcription_provider == "Qwen API":
             st.markdown("---")
@@ -292,12 +315,12 @@ else:
         st.markdown("---")
 
         stream_status = "流式" if stream_output else "非流式"
-        st.subheader(f"正在生成笔记 ({provider_name} {stream_status})...")
+        st.subheader(f"正在生成笔记 ({provider_name} / {selected_llm_model} {stream_status})...")
         
         if transcription_provider == "Local Whisper":
             asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
         else:
-            asr_config_text = "转录服务: **Qwen API** (模型: **qwen3-asr-flash**)"
+            asr_config_text = f"转录服务: **Qwen API** (模型: **{qwen_asr_model}**)"
             if st.session_state.asr_context:
                 asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
         
@@ -331,7 +354,8 @@ else:
             transcription_provider,
             st.session_state.note_type, 
             st.session_state.asr_context,
-            final_custom_instructions
+            final_custom_instructions,
+            qwen_asr_model=qwen_asr_model
         )
         
         for event_type, value, *rest in generator:

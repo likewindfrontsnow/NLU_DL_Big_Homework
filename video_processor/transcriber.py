@@ -81,7 +81,7 @@ QWEN_RETRY_EXCEPTIONS = (
 )
 
 @retry(max_retries=3, delay=5, allowed_exceptions=QWEN_RETRY_EXCEPTIONS)
-def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str | None:
+def transcribe_with_qwen(audio_path: str, asr_context: str | None = None,model_name:str="qwen3-asr-flash") -> str | None:
     current_api_key = os.getenv("DASHSCOPE_API_KEY") or LLM_CONFIG.get("api_key")
     audio_filename = os.path.basename(audio_path)
     print(f"  > [Qwen API] 正在提交: {audio_filename} (线程: {threading.current_thread().name})")
@@ -118,7 +118,7 @@ def transcribe_with_qwen(audio_path: str, asr_context: str | None = None) -> str
 
         response = dashscope.MultiModalConversation.call(
             api_key=current_api_key,
-            model="qwen3-asr-flash", 
+            model=model_name, 
             messages=messages,
             result_format="message", 
             asr_options={
