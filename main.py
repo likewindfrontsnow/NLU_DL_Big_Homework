@@ -14,7 +14,11 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
     # 一些初始化工作
     temp_root="temp"
     output_dir = os.path.join(temp_root, "output_chunks")
+    final_output_dir="output"
+    if(not os.path.exists(final_output_dir)):
+        os.makedirs(final_output_dir)
 
+    final_notes_save_path= os.path.join(final_output_dir, f"{output_filename}.md")
     if os.path.exists(output_dir):
         try:
             shutil.rmtree(output_dir) 
@@ -25,8 +29,6 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
     if not os.path.exists(temp_root):
         os.makedirs(temp_root)
     
-    final_notes_save_path = f"{output_filename}.md"
-
     transcript_save_path = os.path.join(temp_root, "source_transcript.txt")
     if os.path.exists(transcript_save_path):
         try:

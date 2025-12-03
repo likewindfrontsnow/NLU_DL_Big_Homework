@@ -5,7 +5,6 @@ import time
 import io
 from contextlib import redirect_stdout
 from main import main_process_generator
-# [修改点 1] 引入 ASR_MODELS_WITH_CONTEXT_SUPPORT
 from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT
 from llm_api import refine_llm_generation
 from api_verifier import check_api_connectivity 
@@ -14,6 +13,14 @@ from model_verifier import verify_llm_model, verify_asr_model
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
+
+def cleanup_temp_file(file_path):
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"已清理临时文件: {file_path}")
+    except Exception as e:
+        print(f"清理文件失败: {e}")
 
 def _save_key(key):
     env_path = ".env"
@@ -440,7 +447,8 @@ else:
                 
                 if "401" in text or "密钥无效" in text or "Unauthorized" in text:
                     st.session_state.api_key_invalid = True
-                
+                cleanup_temp_file(temp_file_path)
+
                 st.session_state.processing_has_failed = True 
                 st.session_state.processing_started = False
                 stop_button_placeholder.empty()
@@ -449,6 +457,7 @@ else:
             
             elif event_type == "error":
                 st.error(text)
+                cleanup_temp_file(temp_file_path)
                 llm_output_container.error(text)
                 st.session_state.processing_has_failed = True 
                 st.session_state.processing_started = False
@@ -483,7 +492,7 @@ else:
                         os.remove(temp_file_path)
                 except OSError as e:
                     st.warning(f"无法自动删除临时上传文件 '{temp_file_path}': {e}")
-                
+                cleanup_temp_file(temp_file_path)
                 st.rerun() 
                 break
 
@@ -591,7 +600,7 @@ else:
             if not st.session_state.get("refinement_stop_requested", False):
                 st.session_state.current_notes = refined_notes if refined_notes else st.session_state.current_notes
                 try:
-                    save_path = f"{st.session_state.output_filename}_refined.md"
+                    save_path = os.path.join("output", f"{st.session_state.output_filename}_refined.md")
                     with open(save_path, 'w', encoding='utf-8') as f:
                         f.write(st.session_state.current_notes)
                     st.success(f"精炼完成！")
