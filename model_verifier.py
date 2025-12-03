@@ -1,4 +1,3 @@
-# model_verifier.py
 import os
 import json
 import requests
@@ -144,7 +143,7 @@ def run_full_check():
     current_base_url = LLM_CONFIG.get("base_url")
     current_llm = LLM_CONFIG.get("model")
     
-    target_asr = "qwen3-asr-flash" 
+    target_asr = "qwen-audio-asr-latest"
 
     if not current_api_key:
         print("❌ 错误：未在 config.py 或环境变量中找到 API Key。请先配置 .env 文件。")
@@ -168,5 +167,5 @@ def run_full_check():
         print("⚠️ 发现潜在问题，请根据上方错误提示进行修正。")
     print("="*60)
 
-if __name__ == "__main__":
-    run_full_check()
+# if __name__ == "__main__":
+#     run_full_check()

@@ -53,6 +53,11 @@ SUPPORTED_ASR_MODELS = [
     "paraformer-realtime-v1",
 ]
 
+ASR_MODELS_WITH_CONTEXT_SUPPORT=[
+    "qwen3-asr-flash-filetrans",
+    "qwen3-asr-flash",   
+
+]
 
 LLM_CONFIG = {
     "provider_name": LLM_PROVIDER_NAME,
