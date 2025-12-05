@@ -1,17 +1,17 @@
-# main.py
 import concurrent.futures
 import time
 import os
-import sys
 import shutil
 from core.config import LLM_CONFIG
 from media_processor.splitter import split_media_to_audio_chunks_generator
 from media_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model, transcribe_with_qwen
 from media_processor.visual_manager import VisualManager
+from ai_services.llm_api import run_llm_generation
 
-from ai_services.llm_api import run_llm_generation, refine_llm_generation 
+VIDEO_EXTS = {'.mp4', '.mov', '.mpeg', '.webm'}
+AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.amr', '.mpga'}
+TEXT_EXTS = {'.txt', '.md', '.mdx', '.markdown', '.pdf', '.html', '.xlsx', '.xls', '.doc', '.docx', '.csv', '.eml', '.msg', '.pptx', '.ppt', '.xml', '.epub'}
 
-# 生成器函数，处理流程并实时产出进度与LLM文本块
 def main_process_generator(
     input_path: str,  
     output_filename: str, 
@@ -22,25 +22,23 @@ def main_process_generator(
     asr_context: str | None = None, 
     additional_instructions: str = "",
     qwen_asr_model: str = "qwen3-asr-flash",
-    enable_visual_analysis: bool = False # [新增] 接收前端传递的视觉分析开关
+    enable_visual_analysis: bool = False 
 ): 
-    # 一些初始化工作
     temp_root = "temp"
     output_dir = os.path.join(temp_root, "output_chunks")
     final_output_dir = "output"
-    if not os.path.exists(final_output_dir):
-        os.makedirs(final_output_dir)
+    os.makedirs(final_output_dir, exist_ok=True)
 
     final_notes_save_path = os.path.join(final_output_dir, f"{output_filename}.md")
+    
     if os.path.exists(output_dir):
         try:
             shutil.rmtree(output_dir) 
             time.sleep(0.5)          
-        except OSError as e:
-            print(f"警告：无法清理旧的临时文件夹: {e}")
+        except OSError:
+            pass
 
-    if not os.path.exists(temp_root):
-        os.makedirs(temp_root)
+    os.makedirs(temp_root, exist_ok=True)
     
     transcript_save_path = os.path.join(temp_root, "source_transcript.txt")
     if os.path.exists(transcript_save_path):
@@ -49,25 +47,18 @@ def main_process_generator(
         except OSError:
             pass
         
-    video_exts = {'.mp4', '.mov', '.mpeg', '.webm'}
-    audio_exts = {'.mp3', '.m4a', '.wav', '.amr', '.mpga'}
-    text_exts = {'.txt', '.md', '.mdx', '.markdown', '.pdf', '.html', '.xlsx', '.xls', '.doc', '.docx', '.csv', '.eml', '.msg', '.pptx', '.ppt', '.xml', '.epub'}
-
     file_ext = os.path.splitext(input_path)[1].lower()
     current_progress = 0
     full_transcript = ""
 
-    # 内部帮助函数：运行 LLM 并处理结果
     def run_llm_and_yield_results():
         final_text = "" 
-        
         try:
             provider_name = LLM_CONFIG.get('provider_name', 'LLM')
             model_name = LLM_CONFIG.get('model', 'default')
             stream_status = "流式" if stream_output else "非流式"
             yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status}, 类型: {note_type})..."
             
-            # 将最终的转录稿（可能包含视觉内容）传输给 LLM
             llm_call_result = run_llm_generation(full_transcript, stream_output, note_type, additional_instructions)
             
             if stream_output:
@@ -81,7 +72,7 @@ def main_process_generator(
                     yield "llm_chunk", final_text 
             
             if not final_text:
-                yield "persistent_error", 0, "**笔记生成失败**\n\nAPI 在多次尝试后，未返回任何有效内容。请检查您的 API 配置以及输入文本是否过长或格式异常。"
+                yield "persistent_error", 0, "**笔记生成失败**\n\nAPI 在多次尝试后，未返回任何有效内容。"
                 return
 
             try:
@@ -89,40 +80,29 @@ def main_process_generator(
                     f.write(final_text)
                 yield "save_path", final_notes_save_path
             except IOError as e:
-                user_friendly_error = f"**保存最终笔记文件失败**\n\n无法将生成的笔记写入本地文件。\n\n**可能原因:**\n- 程序没有在当前目录创建文件的权限。\n- 磁盘空间不足。\n\n**原始错误信息:**\n`{e}`"
-                yield "persistent_error", 0, user_friendly_error
+                yield "persistent_error", 0, f"**保存最终笔记文件失败**\n\n`{e}`"
                 return
 
-        except ValueError as e: 
-            yield "persistent_error", 0, str(e)
-            return
         except Exception as e: 
-            provider_name = LLM_CONFIG.get('provider_name', 'LLM')
-            user_friendly_error = f"**笔记生成失败**\n\n看起来在与 {provider_name} API 服务通信时遇到了问题。\n\n**原始错误信息:**\n`{e}`"
-            yield "persistent_error", 0, user_friendly_error
+            yield "persistent_error", 0, f"**笔记生成失败**\n\n`{e}`"
             return
         
-    # === 文本文档工作流 ===    
-    if file_ext in text_exts:
+    if file_ext in TEXT_EXTS:
         total_steps = 2
         yield "progress", 0 / total_steps, "步骤 1/2: 正在读取文本文档..."
         try:
             with open(input_path, 'r', encoding='utf-8') as f:
                 full_transcript = f.read()
         except Exception as e:
-            user_friendly_error = f"**读取文件失败**\n\n无法读取您上传的文本文档 '{os.path.basename(input_path)}'。\n\n**可能原因:**\n- 文件已损坏或编码格式不是 UTF-8。\n- 程序没有读取该文件的权限。\n\n**原始错误信息:**\n`{e}`"
-            yield "persistent_error", 0, user_friendly_error
+            yield "persistent_error", 0, f"**读取文件失败**\n\n`{e}`"
             return
         
         yield "transcript", full_transcript 
-        
         current_progress += 1
-        provider_name = LLM_CONFIG.get('provider_name', 'LLM')
-        yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {provider_name}..."
+        yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {LLM_CONFIG.get('provider_name', 'LLM')}..."
         
         final_path = None
-        llm_gen = run_llm_and_yield_results()
-        for event_type, value, *rest in llm_gen:
+        for event_type, value, *rest in run_llm_and_yield_results():
             if event_type == "persistent_error":
                 yield event_type, value, rest[0]
                 return
@@ -139,26 +119,9 @@ def main_process_generator(
             yield "done", final_path, "🎉 恭喜！智能笔记已生成！"
         return
 
-    # === 视频和音频文件工作流 ===
-    elif file_ext in video_exts or file_ext in audio_exts:
-        is_video = file_ext in video_exts
-        
-        # [修改] 判断是否需要执行视觉分析
-        # 条件：必须是视频文件 且 用户在前端开启了开关
+    elif file_ext in VIDEO_EXTS or file_ext in AUDIO_EXTS:
+        is_video = file_ext in VIDEO_EXTS
         do_visual_analysis = is_video and enable_visual_analysis
-        
-        # 动态计算总步骤数
-        # 如果不做视觉分析：1.切分 2.转录 3.生成笔记 (共3步)
-        # 如果做视觉分析：1.切分 2.转录 3.视觉分析 4.生成笔记 (共4步)
-        # 注意：之前的代码在 is_video 时可能会把“汇总文字稿”单算一步，这里为了逻辑清晰，我们重新梳理步骤：
-        # Step 1: 切分
-        # Step 2: 转录
-        # Step 3: (可选) 视觉分析
-        # Step 4: 汇总与生成
-        
-        # 这里为了保持进度条连贯性，我们按以下逻辑设定：
-        # 基础步骤: 切分(1) + 转录(1) + 生成(1) = 3
-        # 额外步骤: 视觉分析(+1)
         total_steps = 4 if do_visual_analysis else 3
         
         step_name = "视频" if is_video else "音频"
@@ -171,22 +134,18 @@ def main_process_generator(
             chunk_duration_seconds = 720
             yield "sub_progress", 0.0, f"使用 Local Whisper"
 
-        splitter_generator = split_media_to_audio_chunks_generator(input_path, output_dir, chunk_duration_seconds) 
         audio_chunks = []
-        
-        for event_type, val1, *val2 in splitter_generator:
+        for event_type, val1, *val2 in split_media_to_audio_chunks_generator(input_path, output_dir, chunk_duration_seconds):
             if event_type == 'progress':
-                completed, total = val1, val2[0]
-                yield "sub_progress", completed / total, f"正在切分... ({completed}/{total})"
+                yield "sub_progress", val1 / val2[0], f"正在切分... ({val1}/{val2[0]})"
             elif event_type == 'result':
                 audio_chunks = val1
             elif event_type == 'error':
-                user_friendly_error = f"**媒体文件切分失败**\n\n无法处理您上传的媒体文件。这通常与 **FFmpeg** 配置或文件本身有关。\n\n**请检查:**\n1. **FFmpeg 是否已正确安装**: 确保 FFmpeg 已安装并在系统的环境变量 `PATH` 中。\n2. **文件是否完好**: 确认您的文件 `{os.path.basename(input_path)}` 没有损坏且格式受支持。\n\n**原始错误信息:**\n`{val1}`"
-                yield "persistent_error", 0, user_friendly_error
+                yield "persistent_error", 0, f"**媒体文件切分失败**\n\n`{val1}`"
                 return
         
         if not audio_chunks:
-            yield "persistent_error", 0, f"**{step_name}切分失败**\n\n未能从您的文件中提取出任何音频块。请确保文件时长不为零，且已正确安装 FFmpeg。"
+            yield "persistent_error", 0, f"**{step_name}切分失败**\n\n未能提取出音频块。"
             return
         
         yield "sub_progress", 1.0, f"✅ {step_name}切分全部完成！"
@@ -199,8 +158,7 @@ def main_process_generator(
                 pre_download_whisper_model(whisper_model_size)
                 yield "sub_progress", 1.0, f"✅ Whisper 模型 ({whisper_model_size}) 准备就绪。"
             except Exception as e:
-                user_friendly_error = f"**Whisper 模型加载失败**\n\n无法下载或加载指定的 Whisper 模型 '{whisper_model_size}'。\n\n**可能原因:**\n1. 网络连接问题（如果模型未缓存）。\n2. 模型名称拼写错误。\n3. 磁盘空间不足或权限问题。\n\n**原始错误信息:**\n`{e}`"
-                yield "persistent_error", 0, user_friendly_error
+                yield "persistent_error", 0, f"**Whisper 模型加载失败**\n\n`{e}`"
                 return
         else:
              yield "sub_progress", 1.0, f"✅ Qwen API 准备就绪。"
@@ -211,20 +169,16 @@ def main_process_generator(
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                future_to_index = {}
                 if transcription_provider == "Local Whisper":
-                    print(f"--- 开始使用 Local Whisper (模型: {whisper_model_size}) 进行转录 ---")
                     future_to_index = {
                         executor.submit(transcribe_single_audio_chunk, chunk, whisper_model_size): i
                         for i, chunk in enumerate(audio_chunks)
                     }
-                elif transcription_provider == "Qwen API":
-                    print("--- 开始使用 Qwen API (模型: qwen3-asr-flash) 进行转录 ---")
+                else:
                     future_to_index = {
                         executor.submit(transcribe_with_qwen, chunk, asr_context, qwen_asr_model): i
                         for i, chunk in enumerate(audio_chunks)
                     }
-
                 
                 for future in concurrent.futures.as_completed(future_to_index):
                     index = future_to_index[future]
@@ -232,29 +186,17 @@ def main_process_generator(
                     if result is not None:
                         all_transcripts[index] = result
                     else:
-                        error_msg = f"转录任务未返回有效文本 (块索引: {index}, 服务: {transcription_provider})。"
-                        if transcription_provider == "Qwen API":
-                            error_msg += " 请检查 API Key 是否正确以及网络连接。"
-                        else:
-                             error_msg += f" 请检查 Whisper 模型 '{whisper_model_size}' 是否正确加载。"
-                        raise Exception(error_msg)
+                        raise Exception(f"转录任务失败 (块 {index})")
                     
                     num_transcribed += 1
                     yield "sub_progress", num_transcribed / len(audio_chunks), f"正在转录... ({num_transcribed}/{len(audio_chunks)})"
 
         except Exception as e:
-            user_friendly_error = f"**音频转录失败 ({transcription_provider})**\n\n在转录时发生无法恢复的错误。\n\n**可能原因:**\n"
-            if transcription_provider == "Qwen API":
-                user_friendly_error += "1. **API Key 错误**: 检查 `.env` 中的 `LLM_API_KEY` (Qwen API 正在复用此 Key) 是否正确且有效。\n2. **网络问题**: 无法连接到 DashScope API 服务。\n3. **文件问题**: 某个音频块已损坏无法处理。\n"
-            else:
-                user_friendly_error += f"1. **Whisper 模型加载失败**: 确保指定的 '{whisper_model_size}' 模型文件可访问。\n2. **依赖库问题**: 确保 `openai-whisper` 及其依赖（如 PyTorch）已正确安装。\n"
-            
-            user_friendly_error += f"\n**原始错误信息:**\n`{e}`"
-            yield "persistent_error", 0, user_friendly_error
+            yield "persistent_error", 0, f"**音频转录失败 ({transcription_provider})**\n\n`{e}`"
             return
         
         if any(t is None for t in all_transcripts):
-            yield "persistent_error", 0, "**音频转录不完整**\n\n部分音频块在多次尝试后仍然转录失败。为确保笔记的完整性，处理已中止。"
+            yield "persistent_error", 0, "**音频转录不完整**"
             return
 
         yield "sub_progress", 1.0, "✅ 音频转录全部完成！"
@@ -262,65 +204,50 @@ def main_process_generator(
         yield "progress", current_progress / total_steps, "所有音频块转录完成！"
         shutil.rmtree(output_dir, ignore_errors=True)
 
-        # 汇总音频转录稿
         raw_audio_transcript = "\n\n".join(filter(None, all_transcripts))
-        full_transcript = raw_audio_transcript # 默认情况下，全文就是音频转录稿
+        full_transcript = raw_audio_transcript
 
-        # [新增] 视觉分析流程
         if do_visual_analysis:
             yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在进行视频视觉内容分析 (VLM)..."
             
             try:
-                # 统一使用综合课堂模式，让模型自动判断 PPT/板书
-                vlm_mode = "lecture_mixed"
-                
-                yield "sub_progress", 0.0, f"模式: {vlm_mode} | 正在抽帧并调用 VLM..."
-                
+                yield "sub_progress", 0.0, f"模式: lecture_mixed | 正在抽帧并调用 VLM..."
                 vm = VisualManager()
-                # 间隔设为 60s 以节省 Token，max_workers 保持 4
                 visual_report = vm.process_video_for_visual_summary(
                     input_path, 
                     interval_seconds=60, 
-                    mode=vlm_mode,
+                    mode="lecture_mixed",
                     max_workers=4
                 )
-                
                 yield "sub_progress", 1.0, "✅ 视觉分析完成。"
                 
-                # 将视觉报告合并到 full_transcript 中
                 full_transcript = (
                     "【以下是视频的音频转录内容】\n"
                     f"{raw_audio_transcript}\n\n"
                     "========================================\n"
                     "【以下是视频画面的视觉分析报告（包含PPT/板书内容）】\n"
-                    "请将以下视觉信息与音频内容结合，生成完整的笔记。如果视觉内容包含公式或图表，请重点整合。\n\n"
+                    "请将以下视觉信息与音频内容结合，生成完整的笔记。\n\n"
                     f"{visual_report}"
                 )
-                
                 current_progress += 1
                 yield "progress", current_progress / total_steps, "视觉分析完成，正在汇总所有内容..."
 
             except Exception as e:
-                print(f"⚠️ 视觉分析模块非致命错误: {e}")
                 yield "sub_progress", 1.0, f"⚠️ 视觉分析遇到问题，将仅使用音频内容继续。"
-                # 出错了也不中断主流程，优雅降级，仅使用音频内容
                 full_transcript = raw_audio_transcript
         
-        # 保存汇总后的文字稿（可能包含视觉内容）
         try:
             with open(transcript_save_path, 'w', encoding='utf-8') as f:
                 f.write(full_transcript)
-        except IOError as e:
-            yield "error", 0, f"无法保存文字稿文件: {e}"
+        except IOError:
+            pass
 
         yield "transcript", full_transcript 
 
-        provider_name = LLM_CONFIG.get('provider_name', 'LLM')
-        yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {provider_name}..."
+        yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {LLM_CONFIG.get('provider_name', 'LLM')}..."
 
         final_path = None
-        llm_gen = run_llm_and_yield_results()
-        for event_type, value, *rest in llm_gen:
+        for event_type, value, *rest in run_llm_and_yield_results():
             if event_type == "persistent_error":
                 yield event_type, value, rest[0]
                 return
@@ -338,61 +265,5 @@ def main_process_generator(
         return
         
     else:
-        user_friendly_error = f"**不支持的文件类型**\n\n您上传的文件类型 (`{file_ext}`) 当前不受支持。请参照上传框下的提示，上传指定格式的视频、音频或文本文档。"
-        yield "error", 0, user_friendly_error
+        yield "error", 0, f"**不支持的文件类型**\n\n`{file_ext}`"
         return
-
-
-# 用于运行、打印生成器输出 (本地测试用)
-def run_test(test_file_path, provider="", model_size="tiny", context=None, stream=False):
-    print(f"\n>>> 正在测试文件: {test_file_path} (服务: {provider})")
-    
-    if not os.path.exists(test_file_path):
-        print(f"!!! 警告: 测试文件 '{test_file_path}' 不存在。跳过此测试。")
-        return
-
-    try:
-        output_name = os.path.splitext(os.path.basename(test_file_path))[0] + "_test_notes"
-        
-        generator = main_process_generator(
-            input_path=test_file_path,
-            output_filename=output_name,
-            whisper_model_size=model_size,
-            stream_output=stream,
-            transcription_provider=provider,
-            asr_context=context,
-            note_type="STEM",
-            enable_visual_analysis=True # 测试时默认开启
-        )
-
-        final_path = None
-        
-        for event_type, value, *rest in generator:
-            text = rest[0] if rest else ""
-            
-            if event_type == "progress":
-                print(f"[进度] {value*100:.0f}% - {text}")
-            elif event_type == "sub_progress":
-                print(f"  [子进度] {value*100:.0f}% - {text}")
-            elif event_type == "transcript":
-                print(f"[转录稿生成] (前100字符): {value[:100]}...")
-            elif event_type == "llm_chunk":
-                print(f"{value}", end="")
-            elif event_type == "persistent_error" or event_type == "error":
-                print(f"\n\n!!! [严重错误] {text} !!!")
-                break
-            elif event_type == "done":
-                final_path = value
-                print(f"\n\n[完成] {text}")
-                print(f"最终文件保存在: {final_path}")
-                break
-        
-        if final_path:
-            print(f"\n>>> ✅ 测试 {test_file_path} 成功。")
-        else:
-            print(f"\n>>> ❌ 测试 {test_file_path} 失败或未完成。")
-
-    except Exception as e:
-        print(f"\n!!! [测试时发生意外异常] {e}")
-        import traceback
-        traceback.print_exc()
