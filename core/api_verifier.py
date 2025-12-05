@@ -1,6 +1,6 @@
 import requests
 import sys
-from config import LLM_CONFIG
+from core.config import LLM_CONFIG
 
 def check_api_connectivity(config: dict) -> bool:
     

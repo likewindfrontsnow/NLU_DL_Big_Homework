@@ -5,7 +5,7 @@ import re
 import shutil
 from typing import List, Tuple
 from .frame_extractor import FrameExtractor
-from ..ai_services.vlm_api import analyze_image
+from ai_services.vlm_api import analyze_image
 
 class VisualManager:
     def __init__(self):

@@ -7,7 +7,7 @@ import tempfile
 import wave
 import struct
 from http import HTTPStatus
-from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS
+from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS
 
 def _create_dummy_wav(duration_sec=0.5):
     temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
