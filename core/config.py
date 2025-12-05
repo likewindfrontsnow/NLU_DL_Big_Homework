@@ -19,6 +19,15 @@ SUPPORTED_LLM=[
 
 SUPPORTED_VLM=[
     "qwen3-vl-plus",
+    "qwen3-vl-flash",
+    "qwen3-vl-30b-a3b-thinking",
+    "qwen-vl-max",
+    "qwen-vl-plus",
+    "qvq-max",
+    "qvq-plus",
+    "qvq-72b-preview",
+    "qwen-vl-ocr-latest"
+
 ]
 
 SUPPORTED_IV_MODELS = [
