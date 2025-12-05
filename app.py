@@ -5,11 +5,11 @@ import time
 import io
 from contextlib import redirect_stdout
 from main import main_process_generator
-from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT
-from llm_api import refine_llm_generation
-from api_verifier import check_api_connectivity 
+from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT
+from ai_services.llm_api import refine_llm_generation
+from core.api_verifier import check_api_connectivity 
 from dotenv import set_key
-from model_verifier import verify_llm_model, verify_asr_model
+from core.model_verifier import verify_llm_model, verify_asr_model
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")

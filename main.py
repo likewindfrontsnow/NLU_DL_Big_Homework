@@ -4,18 +4,12 @@ import time
 import os
 import sys
 import shutil
-from config import LLM_CONFIG
-from video_processor.splitter import split_media_to_audio_chunks_generator
-from video_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model, transcribe_with_qwen
+from core.config import LLM_CONFIG
+from media_processor.splitter import split_media_to_audio_chunks_generator
+from media_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model, transcribe_with_qwen
+from media_processor.visual_manager import VisualManager
 
-# [新增] 导入视觉管理器
-# 使用 try-except 兼容不同的运行环境（直接运行或作为包调用）
-try:
-    from video_processor.visual_manager import VisualManager
-except ImportError:
-    from .video_processor.visual_manager import VisualManager
-
-from llm_api import run_llm_generation, refine_llm_generation 
+from ai_services.llm_api import run_llm_generation, refine_llm_generation 
 
 # 生成器函数，处理流程并实时产出进度与LLM文本块
 def main_process_generator(
