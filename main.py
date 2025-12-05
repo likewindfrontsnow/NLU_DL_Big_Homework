@@ -25,7 +25,8 @@ def main_process_generator(
     qwen_asr_model: str = "qwen3-asr-flash",
     enable_visual_analysis: bool = False,
     vlm_model_name: str = "qwen3-vl-plus",
-    keep_visual_files: bool = False
+    keep_visual_files: bool = False,
+    insert_images: bool = False
 ): 
     run_logs = []
     def log(msg):
@@ -42,8 +43,8 @@ def main_process_generator(
             return None
 
     log(f"任务开始: {input_path}")
-    log(f"参数: ASR={transcription_provider} ({qwen_asr_model if transcription_provider=='Qwen API' else whisper_model_size}), LLM={LLM_CONFIG.get('model')}, Note={note_type}")
-    log(f"视觉分析: {enable_visual_analysis} (Model: {vlm_model_name}, KeepFiles: {keep_visual_files})")
+    log(f"参数: ASR={transcription_provider}, LLM={LLM_CONFIG.get('model')}, Note={note_type}")
+    log(f"视觉: {enable_visual_analysis} (Model: {vlm_model_name}, Keep: {keep_visual_files}, Insert: {insert_images})")
 
     temp_root = "temp"
     output_dir = os.path.join(temp_root, "output_chunks")
@@ -262,6 +263,10 @@ def main_process_generator(
             
             try:
                 yield "sub_progress", 0.0, f"模式: lecture_mixed | 正在抽帧并调用 VLM..."
+                
+                # 定义图片资源保存路径
+                image_assets_dir = os.path.join(final_output_dir, "assets")
+
                 vm = VisualManager()
                 visual_report = vm.process_video_for_visual_summary(
                     input_path, 
@@ -269,16 +274,23 @@ def main_process_generator(
                     mode="lecture_mixed",
                     max_workers=4,
                     model=vlm_model_name,
-                    keep_intermediate_files=keep_visual_files
+                    keep_intermediate_files=keep_visual_files,
+                    insert_images=insert_images,
+                    image_output_dir=image_assets_dir
                 )
                 yield "sub_progress", 1.0, "✅ 视觉分析完成。"
                 
+                # 构建给 LLM 的指令
+                instruction_text = "请将以下视觉信息与音频内容结合，生成完整的笔记。"
+                if insert_images:
+                    instruction_text += "\n**重要提示**：视觉报告中包含了形如 `![关键帧截图](assets/...)` 的图片链接。请务必根据内容上下文，将这些图片链接**原样插入**到生成的 Markdown 笔记中对应的段落之后，以图文并茂地展示内容。"
+
                 full_transcript = (
                     "【以下是视频的音频转录内容】\n"
                     f"{raw_audio_transcript}\n\n"
                     "========================================\n"
                     "【以下是视频画面的视觉分析报告（包含PPT/板书内容）】\n"
-                    "请将以下视觉信息与音频内容结合，生成完整的笔记。\n\n"
+                    f"{instruction_text}\n\n"
                     f"{visual_report}"
                 )
                 

@@ -13,7 +13,7 @@ DOC_EXTS = {'txt', 'md', 'mdx', 'markdown', 'pdf', 'html', 'xlsx', 'xls', 'doc',
 ALL_EXTS = list(VIDEO_EXTS | AUDIO_EXTS | DOC_EXTS)
 
 INSTRUCTION_OPTIONS = [
-    "请尤其注意老师提到的与考试相关的部分"
+    "请尤其注意老师提到的与考试相关的部分",
     "请将所有专业术语中英文对照列出",
     "请使用更多的表格来对比易混淆的概念",
     "语气要更加幽默风趣，像个老朋友在聊天",
@@ -246,6 +246,7 @@ else:
         
         selected_vlm_model = "qwen3-vl-plus"
         keep_visual_files = False
+        insert_images = False
 
         if enable_visual_analysis:
             selected_vlm_model = st.selectbox(
@@ -259,6 +260,12 @@ else:
                 value=False,
                 disabled=is_busy,
                 help="勾选后，抽取的关键帧和生成的视觉报告将不会被自动删除。"
+            )
+            insert_images = st.checkbox(
+                "智能插入图片到笔记",
+                value=False,
+                disabled=is_busy,
+                help="勾选后，生成的笔记将包含视频关键帧的图片链接。"
             )
 
         st.markdown("---")
@@ -455,7 +462,8 @@ else:
             qwen_asr_model=qwen_asr_model,
             enable_visual_analysis=enable_visual_analysis,
             vlm_model_name=selected_vlm_model,
-            keep_visual_files=keep_visual_files
+            keep_visual_files=keep_visual_files,
+            insert_images=insert_images
         )
         
         for event_type, value, *rest in generator:
