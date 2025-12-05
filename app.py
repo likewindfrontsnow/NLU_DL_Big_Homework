@@ -273,6 +273,13 @@ else:
             disabled=is_busy
         )
 
+        enable_visual_analysis = st.toggle(
+            "启用视频视觉分析 (VLM)",
+            value=False,
+            help="开启后，将对视频进行抽帧分析，提取PPT和板书内容。这会增加处理时间。",
+            disabled=is_busy
+        )
+
         st.markdown("---")
         keep_temp_files = st.checkbox(
             "保留语音转文字稿", 
@@ -408,7 +415,8 @@ else:
             st.session_state.note_type, 
             st.session_state.asr_context,
             final_custom_instructions,
-            qwen_asr_model=qwen_asr_model
+            qwen_asr_model=qwen_asr_model,
+            enable_visual_analysis=enable_visual_analysis
         )
         
         for event_type, value, *rest in generator:
