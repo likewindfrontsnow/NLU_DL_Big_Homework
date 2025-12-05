@@ -7,8 +7,8 @@ from contextlib import redirect_stdout
 from main import main_process_generator
 from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT
 from ai_services.llm_api import refine_llm_generation
-from core.api_verifier import check_api_connectivity 
 from dotenv import set_key
+# 引入 model_verifier 中的验证函数，替代旧的 api_verifier
 from core.model_verifier import verify_llm_model, verify_asr_model
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
@@ -33,14 +33,47 @@ def _save_key(key):
         LLM_CONFIG["provider_name"] = "DashCope(Qwen)"
         set_key(env_path, "LLM_PROVIDER_NAME", "DashCope(Qwen)")
 
+# --- [新增] 启动自检逻辑 ---
+# 使用 session_state 确保仅在会话开始（刷新页面）时检查一次，而不是每次交互都检查
+if "has_validated_on_startup" not in st.session_state:
+    st.session_state.has_validated_on_startup = False
+
+# 如果配置中有 Key，且尚未在本次会话中验证过
+if LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup:
+    with st.spinner("🔄 正在启动自检：验证 API Key 有效性..."):
+        # 获取验证所需的参数，提供默认值防止报错
+        check_key = LLM_CONFIG["api_key"]
+        check_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        check_model = LLM_CONFIG.get("model", "qwen-plus")
+        
+        # 调用验证函数
+        is_valid, msg = verify_llm_model(check_key, check_url, check_model)
+        
+        if is_valid:
+            # 验证通过，标记为已验证
+            st.session_state.has_validated_on_startup = True
+            # 可选：显示一个小的成功提示
+            # st.toast("✅ API Key 验证通过", icon="🔐")
+        else:
+            # 验证失败
+            st.error(f"⚠️ 启动检测警告：当前保存的 API Key 无效或过期。\n\n**原因**: {msg}")
+            st.warning("请在下方重新输入有效的 API Key。")
+            
+            # 关键步骤：清空内存中的 Key，强制进入下方的输入流程
+            LLM_CONFIG["api_key"] = ""
+            # 注意：这里我们不自动清空 .env 文件，防止因网络波动误删，而是让用户输入新 Key 覆盖
+
+# --- 主流程 ---
 
 if not LLM_CONFIG.get("api_key"):
-    st.warning("🔑 未检测到 API Key")
-    st.markdown("""
-    请输入您的 DashScope (Qwen) API Key。
+    # 如果 Key 为空（可能是首次使用，也可能是上面自检失败被置空了）
+    if not st.session_state.get("has_validated_on_startup", False):
+         st.markdown("### 👋 欢迎使用")
     
-    - 您只需要输入一次，Key 将被安全地保存到项目根目录的 `.env` 文件中。
-    - 您的 Key 仅用于您本地的程序调用，不会上传到别处。
+    st.markdown("""
+    请输入您的 DashScope (Qwen) API Key 以开始使用。
+    
+    - Key 将被安全地保存到本地 `.env` 文件中。
     - 您可以前往 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/apiKey) 获取您的 Key。
     """)
     
@@ -50,38 +83,30 @@ if not LLM_CONFIG.get("api_key"):
         key="api_key_input_main"
     )
     
-    if st.button("保存并开始", use_container_width=True, type="primary"):
+    if st.button("验证并保存", use_container_width=True, type="primary"):
         if new_key and new_key.startswith("sk-"):
-            st.info("正在连接服务器验证 Key 的有效性，请稍候...")
-            test_config = LLM_CONFIG.copy()
-            test_config["api_key"] = new_key
-            if not test_config.get("provider_name"):
-                 test_config["provider_name"] = "DashScope(Qwen)"
-            log_capture_string = io.StringIO()
-            is_valid = False
+            st.info("正在连接服务器验证 Key 的有效性...")
             
-            try:
-                with redirect_stdout(log_capture_string):
-                    is_valid = check_api_connectivity(test_config)
-            except Exception as e:
-                log_capture_string.write(f"\n❌ 验证过程发生意外错误: {e}")
+            # 使用 model_verifier 进行验证
+            verify_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            verify_model = "qwen-plus" # 验证时默认使用通用的模型
             
-            validation_log = log_capture_string.getvalue() 
+            is_valid, msg = verify_llm_model(new_key, verify_url, verify_model)
 
             if is_valid:
                 _save_key(new_key)
-                st.success("✅ API Key 验证通过并已保存！正在重启应用...")
+                st.session_state.has_validated_on_startup = True # 标记为已验证
+                st.success("✅ API Key 验证通过并已保存！")
                 time.sleep(1)
-                st.rerun()
+                st.rerun() # 重新运行以进入主界面
             else:
-                st.error("❌ 验证失败：无法连接到 API 或 Key 无效。")
-                with st.expander("查看详细错误日志 (Debug Info)", expanded=True):
-                    st.text(validation_log)
-                    st.markdown("👉 **请检查您的网络连接，或确认 Key 是否已过期。**")
+                st.error(f"❌ 验证失败：{msg}")
+                st.markdown("👉 **请检查您的 Key 是否正确，或网络是否通畅。**")
         else:
             st.error("Key 格式不正确。它应该以 `sk-` 开头。")
 
 else:
+    # --- Key 存在且有效，进入应用主界面 ---
     st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
 
     if "processing_started" not in st.session_state:
@@ -157,14 +182,6 @@ else:
             horizontal=True,
             format_func=lambda x: note_type_mapping.get(x, x),
             disabled=is_busy
-        )
-        
-        # [新增] 视觉分析开关
-        enable_visual_analysis = st.toggle(
-            "开启视频视觉分析 (VLM)",
-            value=False,
-            disabled=is_busy,
-            help="开启后，将从视频中提取 PPT 或板书画面，并使用视觉模型进行分析。这会增加 API 调用成本和处理时间，但能显著提升笔记中公式和图表的准确性。"
         )
 
         st.markdown("---")
@@ -394,9 +411,7 @@ else:
             if st.session_state.asr_context:
                 asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
         
-        # [修改] 显示是否开启了视觉分析
-        visual_status_text = "✅ **已开启**" if enable_visual_analysis else "❌ **未开启**"
-        st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}** | 视觉分析: {visual_status_text}")
+        st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}**")
         
         llm_output_container = st.empty()
         full_llm_response = ""
@@ -427,8 +442,7 @@ else:
             st.session_state.note_type, 
             st.session_state.asr_context,
             final_custom_instructions,
-            qwen_asr_model=qwen_asr_model,
-            enable_visual_analysis=enable_visual_analysis # [修改] 传递用户选择
+            qwen_asr_model=qwen_asr_model
         )
         
         for event_type, value, *rest in generator:
@@ -512,7 +526,6 @@ else:
                     st.warning(f"无法自动删除临时上传文件 '{temp_file_path}': {e}")
                 cleanup_temp_file(temp_file_path)
                 st.rerun() 
-                break
 
 
     if st.session_state.current_notes:
