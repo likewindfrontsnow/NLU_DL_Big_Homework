@@ -1,44 +1,37 @@
-# splitter.py
 import subprocess
 import os
 import math
 import concurrent.futures
-from core.utils import retry 
+from core.utils import retry
 
 def _get_binary_path(binary_name: str) -> str:
-    local_bin = os.path.join(os.getcwd(), "bin", binary_name + ".exe")
-    
-    if os.path.exists(local_bin):
-        return local_bin
-    
-    return binary_name
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_bin = os.path.join(base_dir, "bin", f"{binary_name}.exe")
+    return local_bin if os.path.exists(local_bin) else binary_name
 
-# 获取媒体文件总时长
 def get_media_duration(media_path: str) -> float | None:
-    """使用 ffprobe 获取媒体文件总时长（秒），适用于视频和音频。"""
     ffprobe_cmd = _get_binary_path("ffprobe")
-    command = [ffprobe_cmd, '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', media_path]
+    command = [
+        ffprobe_cmd, 
+        '-v', 'error', 
+        '-show_entries', 'format=duration', 
+        '-of', 'default=noprint_wrappers=1:nokey=1', 
+        media_path
+    ]
     try:
         result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return float(result.stdout)
-    except FileNotFoundError:
-        print("错误：找不到 'ffprobe' 命令。请确保 FFmpeg 已经完全安装，并且其 bin 目录已添加到了系统的 PATH 环境变量中。")
-        return None
-    except subprocess.CalledProcessError as e:
-        print(f"ffprobe 执行失败，可能是文件已损坏或格式不支持: {e.stderr}")
-        return None
     except Exception as e:
-        print(f"获取媒体时长时发生错误: {e}")
+        print(f"获取媒体时长失败: {e}")
         return None
 
-@retry(max_retries=3, delay=2, allowed_exceptions=(subprocess.CalledProcessError,)) 
-
-# 生成单个音频块
+@retry(max_retries=3, delay=2, allowed_exceptions=(subprocess.CalledProcessError,))
 def _process_chunk(args) -> str | None:
     media_path, output_dir, chunk_duration, i, num_chunks = args
     start_time = i * chunk_duration
     output_filename = os.path.join(output_dir, f"chunk_{i+1:03d}.mp3")
     ffmpeg_cmd = _get_binary_path("ffmpeg")
+    
     command = [
         ffmpeg_cmd, '-i', media_path, 
         '-ss', str(start_time), 
@@ -48,33 +41,26 @@ def _process_chunk(args) -> str | None:
     ]
     
     try:
-        print(f"开始生成第 {i+1}/{num_chunks} 个音频块: {output_filename}")
         subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
-        print(f"完成生成第 {i+1}/{num_chunks} 个音频块。")
         return output_filename
     except subprocess.CalledProcessError as e:
-        print(f"处理第 {i+1} 个音频块时失败: {e.stderr}")
-        raise e 
-    except FileNotFoundError:
-        print("错误：找不到 'ffmpeg' 命令。请确保 FFmpeg 已经完全安装，并且其 bin 目录已添加到了系统的 PATH 环境变量中。")
-        return None
+        print(f"处理音频块 {i+1} 失败: {e.stderr}")
+        raise e
 
-# 将媒体文件切分为音频块并实时产出进度
 def split_media_to_audio_chunks_generator(media_path: str, output_dir: str, chunk_duration: int = 600):
     if not os.path.exists(media_path):
-        yield 'error', f"错误：媒体文件 '{media_path}' 不存在。", None
+        yield 'error', f"媒体文件不存在: {media_path}", None
         return
     
     try:
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
     except OSError as e:
-        yield 'error', f"错误：创建输出目录 '{output_dir}' 失败: {e}", None
+        yield 'error', f"创建输出目录失败: {e}", None
         return
 
     duration = get_media_duration(media_path)
     if not duration:
-        yield 'error', "无法获取媒体文件时长。", None
+        yield 'error', "无法获取媒体时长", None
         return
 
     num_chunks = math.ceil(duration / chunk_duration)
@@ -82,29 +68,30 @@ def split_media_to_audio_chunks_generator(media_path: str, output_dir: str, chun
         yield 'result', []
         return
         
-    print(f"媒体总时长: {duration:.2f}秒, 将被切分为 {num_chunks} 个音频块。")
-
     tasks_args = [(media_path, output_dir, chunk_duration, i, num_chunks) for i in range(num_chunks)]
-    
     output_files = []
     completed_count = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+    
+    max_workers = min(os.cpu_count() or 1, 8)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_args = {executor.submit(_process_chunk, args): args for args in tasks_args}
+        
         for future in concurrent.futures.as_completed(future_to_args):
             try:
                 result = future.result()
                 if result:
                     output_files.append(result)
             except Exception as e:
-                yield 'error', f"一个音频块在多次尝试后仍然无法处理，已停止。错误: {e}", None
+                yield 'error', f"音频块处理失败: {e}", None
                 executor.shutdown(wait=False, cancel_futures=True)
                 return
 
             completed_count += 1
             yield 'progress', completed_count, num_chunks
 
-    if not output_files or len(output_files) != num_chunks:
-        yield 'error', "未能成功生成所有音频块，可能部分块处理失败。", None
+    if len(output_files) != num_chunks:
+        yield 'error', "未能生成所有音频块", None
         return
     
     yield 'result', sorted(output_files)
