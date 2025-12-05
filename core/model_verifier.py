@@ -1,5 +1,4 @@
 import os
-import json
 import requests
 import dashscope
 from dashscope.audio.asr import Transcription
@@ -7,7 +6,6 @@ import tempfile
 import wave
 import struct
 from http import HTTPStatus
-from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS
 
 def _create_dummy_wav(duration_sec=0.5):
     temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -127,37 +125,3 @@ def verify_asr_model(api_key: str, model_name: str):
                 os.remove(dummy_audio_path)
             except:
                 pass
-
-def run_full_check():
-    print("="*60)
-    print("🤖 模型可用性深度验证程序 (Model Verifier)")
-    print("="*60)
-
-    current_api_key = LLM_CONFIG.get("api_key")
-    if not current_api_key:
-        current_api_key = os.getenv("DASHSCOPE_API_KEY")
-    
-    current_base_url = LLM_CONFIG.get("base_url")
-    current_llm = LLM_CONFIG.get("model")
-    
-    target_asr = "fun-asr-mtl" 
-
-    if not current_api_key:
-        print("❌ 错误：未在 config.py 或环境变量中找到 API Key。请先配置 .env 文件。")
-        return
-
-    print(f"\n[1/2] 正在验证当前配置的 LLM: {current_llm}")
-    success_llm, msg_llm = verify_llm_model(current_api_key, current_base_url, current_llm)
-    print(msg_llm)
-
-    print(f"\n[2/2] 正在验证 ASR 模型: {target_asr}")
-    if "qwen" not in target_asr.lower() and "paraformer" not in target_asr.lower() and "fun-asr" not in target_asr.lower():
-        print("⚠️ 跳过 ASR 验证：当前验证器仅支持 Qwen/DashScope 系列 ASR 模型。")
-    else:
-        success_asr, msg_asr = verify_asr_model(current_api_key, target_asr)
-        print(msg_asr)
-
-    print("\n" + "="*60)
-
-# if __name__ == "__main__":
-#     run_full_check()
