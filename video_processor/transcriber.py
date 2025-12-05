@@ -1,3 +1,4 @@
+# video_processor/transcriber.py
 import os
 import whisper
 import threading
@@ -13,6 +14,12 @@ import time
 MODEL_STORAGE = threading.local()
 _DOWNLOAD_LOCK = threading.Lock()
 _LOAD_LOCK = threading.Lock()
+
+def _seconds_to_timestamp(seconds: float) -> str:
+    """将秒数转换为 MM:SS 格式"""
+    m = int(seconds // 60)
+    s = int(seconds % 60)
+    return f"{m:02d}:{s:02d}"
 
 def pre_download_whisper_model(model_name: str):
     with _DOWNLOAD_LOCK:
@@ -30,18 +37,18 @@ def _load_whisper_model(model_name: str):
     print(f"  > 正在为当前线程加载本地 Whisper 模型: {model_name}...")
     try:
         with _LOAD_LOCK:
-            print(f"  > (线程 {threading.current_thread().name}) 正在获取加载锁...")
             model = whisper.load_model(model_name)
-            print(f"  > (线程 {threading.current_thread().name}) 已释放加载锁。")
-        
         print(f"  > ✅ 本地模型 '{model_name}' (线程 {threading.current_thread().name}) 加载成功！")
         return model
     except Exception as e:
-        print(f"  > 错误：无法加载本地 Whisper 模型 '{model_name}'。请确保已正确安装 whisper 库及其依赖。")
-        print(f"  > 详细错误: {e}")
+        print(f"  > 错误：无法加载本地 Whisper 模型 '{model_name}'。")
         raise
 
-def transcribe_single_audio_chunk(audio_path: str, model_name: str) -> str | None:
+def transcribe_single_audio_chunk(audio_path: str, model_name: str, start_offset_seconds: int = 0) -> str | None:
+    """
+    Local Whisper 转录函数
+    参数 start_offset_seconds 用于计算全局绝对时间
+    """
     model_loaded_correctly = (
         hasattr(MODEL_STORAGE, "model") and 
         hasattr(MODEL_STORAGE, "model_name") and
@@ -57,22 +64,34 @@ def transcribe_single_audio_chunk(audio_path: str, model_name: str) -> str | Non
 
     model = MODEL_STORAGE.model
     audio_filename = os.path.basename(audio_path)
-    print(f"  > [Whisper] 正在转录: {audio_filename} (模型: {model_name}, 线程: {threading.current_thread().name})")
+    print(f"  > [Whisper] 正在转录: {audio_filename} (偏移: {start_offset_seconds}s)")
     
     try:
         if not os.path.exists(audio_path):
              raise FileNotFoundError
         
+        # Whisper 原生支持 segments 时间戳
         result = model.transcribe(audio_path)
-        transcription = result["text"]
+        formatted_transcript = ""
+        
+        if "segments" in result:
+            for segment in result["segments"]:
+                # 绝对时间 = 块起始时间 + 句内相对时间
+                absolute_start = segment['start'] + start_offset_seconds
+                time_str = _seconds_to_timestamp(absolute_start)
+                text = segment['text'].strip()
+                if text:
+                    formatted_transcript += f"[{time_str}] {text}\n"
+        else:
+            # 兜底
+            time_str = _seconds_to_timestamp(start_offset_seconds)
+            formatted_transcript = f"[{time_str}] {result['text']}\n"
+            
         print(f"  > ✅ [Whisper] 文件 '{audio_filename}' 转录成功！")
-        return transcription
+        return formatted_transcript
     
-    except FileNotFoundError:
-        print(f"  > 错误：找不到音频文件: {audio_path}")
-        return None 
     except Exception as e:
-        print(f"  > [Whisper] 本地转录失败 (文件: {audio_filename}, 模型: {model_name}): {e}")
+        print(f"  > [Whisper] 转录失败: {e}")
         return None
 
 QWEN_RETRY_EXCEPTIONS = (
@@ -81,11 +100,14 @@ QWEN_RETRY_EXCEPTIONS = (
     Exception 
 )
 
-def _transcribe_sync_qwen(api_key, model_name, audio_path, context_text):
+def _transcribe_sync_qwen(api_key, model_name, audio_path, context_text, start_offset_seconds):
+    """
+    Qwen 同步接口 (qwen3-asr-flash)
+    注意：同步模型不支持返回时间戳，仅在段首标记近似开始时间。
+    """
     abs_audio_path = os.path.abspath(audio_path)
     
     messages = []
-    
     if context_text and context_text.strip():
         messages.append({
             "role": "system",
@@ -102,32 +124,44 @@ def _transcribe_sync_qwen(api_key, model_name, audio_path, context_text):
         model=model_name, 
         messages=messages,
         result_format="message",
-        asr_options={
-            "enable_itn": True 
-        }
+        asr_options={"enable_itn": True}
     )
     
     if response.status_code == 200 and response.output:
         content_list = response.output.choices[0].message.content
+        text_result = ""
         for item in content_list:
             if "text" in item:
-                return item["text"]
+                text_result += item["text"]
+        
+        if text_result:
+            # 仅在段首加一个时间戳作为近似定位
+            time_str = _seconds_to_timestamp(start_offset_seconds)
+            return f"[{time_str}] {text_result}\n"
         return ""
     else:
-        raise Exception(f"Qwen ASR Sync API Error: {response.status_code} - {response.message}")
+        raise Exception(f"Qwen API Error: {response.code} - {response.message}")
 
-def _transcribe_async_filetrans(api_key, model_name, audio_path, context_text):
+def _transcribe_async_filetrans(api_key, model_name, audio_path, context_text, start_offset_seconds):
+    """
+    Qwen 异步接口 (qwen3-asr-flash-filetrans)
+    支持解析 sentences 列表中的 begin_time (毫秒)
+    """
     abs_audio_path = os.path.abspath(audio_path)
     audio_url = f"file://{abs_audio_path}"
     
     try:
+        # 1. 提交任务
         task_response = Transcription.async_call(
             api_key=api_key,
             model=model_name,
             file_urls=[audio_url],
             enable_itn=True
+            # 注意：如果 SDK 支持在此处传 text 上下文，可添加 parameters={'text': context_text}
+            # 具体取决于 SDK 版本，此处按标准调用
         )
         
+        # 2. 等待任务完成
         transcription_response = Transcription.wait(task=task_response, api_key=api_key)
         
         if transcription_response.status_code == 200:
@@ -137,79 +171,97 @@ def _transcribe_async_filetrans(api_key, model_name, audio_path, context_text):
                 if result.get("subtask_status") == "SUCCEEDED":
                     trans_url = result.get("transcription_url")
                     if trans_url:
+                        # 3. 下载并解析详细结果 JSON
                         r = requests.get(trans_url)
                         data = r.json()
-                        if "transcripts" in data:
-                            full_text = "".join([t.get("text", "") for t in data["transcripts"]])
-                            return full_text
-                        elif "text" in data:
-                             return data["text"]
                         
+                        # --- 解析逻辑 ---
+                        if "transcripts" in data:
+                            full_text_with_ts = ""
+                            for t in data["transcripts"]:
+                                # 优先尝试解析 sentences
+                                sentences = t.get("sentences", [])
+                                if sentences:
+                                    for sent in sentences:
+                                        # begin_time 单位是毫秒 [cite: 18]
+                                        begin_ms = sent.get("begin_time", 0)
+                                        # 转换为绝对秒数：(毫秒/1000) + 音频块起始偏移
+                                        abs_seconds = (begin_ms / 1000.0) + start_offset_seconds
+                                        ts_str = _seconds_to_timestamp(abs_seconds)
+                                        
+                                        text_content = sent.get('text', '')
+                                        full_text_with_ts += f"[{ts_str}] {text_content}\n"
+                                else:
+                                    # 如果没有 sentences 字段，回退到整段文本
+                                    ts_str = _seconds_to_timestamp(start_offset_seconds)
+                                    full_text_with_ts += f"[{ts_str}] {t.get('text', '')}\n"
+                            
+                            return full_text_with_ts
+                        
+                        # 兜底逻辑：只有 text 字段时
+                        if "text" in data:
+                             ts_str = _seconds_to_timestamp(start_offset_seconds)
+                             return f"[{ts_str}] {data['text']}\n"
+                    
+                    # 极少数情况 result 中直接有 text
                     if "text" in result:
-                        return result["text"]
+                        ts_str = _seconds_to_timestamp(start_offset_seconds)
+                        return f"[{ts_str}] {result['text']}\n"
                 else:
                     raise Exception(f"Subtask failed: {result.get('message')}")
             return ""
         else:
-             raise Exception(f"Transcription Task Failed: {transcription_response.code} - {transcription_response.message}")
-
+             raise Exception(f"Task Failed: {transcription_response.message}")
     except Exception as e:
         raise Exception(f"Async Transcription Error: {e}")
 
 @retry(max_retries=3, delay=5, allowed_exceptions=QWEN_RETRY_EXCEPTIONS)
-def _execute_transcription(api_key, model_name, audio_path, context):
+def _execute_transcription(api_key, model_name, audio_path, context, offset):
     """
-    根据模型名称自动判断使用同步还是异步接口
+    根据模型名称自动判断使用同步还是异步接口，并传入偏移量
     """
-    # 简单的判断逻辑：文件名包含 'filetrans' 或 'fun-asr' 则为异步
     is_async = "filetrans" in model_name or "fun-asr" in model_name
     
     if is_async:
-        return _transcribe_async_filetrans(api_key, model_name, audio_path, context)
+        return _transcribe_async_filetrans(api_key, model_name, audio_path, context, offset)
     else:
-        return _transcribe_sync_qwen(api_key, model_name, audio_path, context)
+        return _transcribe_sync_qwen(api_key, model_name, audio_path, context, offset)
 
 @retry(max_retries=5, delay=2, backoff_factor=2, allowed_exceptions=QWEN_RETRY_EXCEPTIONS)
-def transcribe_with_qwen(audio_path: str, asr_context: str | None = None, model_name: str = "qwen3-asr-flash") -> str | None:
+def transcribe_with_qwen(audio_path: str, asr_context: str | None = None, model_name: str = "qwen3-asr-flash", start_offset_seconds: int = 0) -> str | None:
+    """
+    Qwen 转录入口，支持 start_offset_seconds
+    """
     current_api_key = os.getenv("DASHSCOPE_API_KEY") or LLM_CONFIG.get("api_key")
-    backup_model = LLM_CONFIG.get("asr_backup_model") # 从配置获取备选模型
+    backup_model = LLM_CONFIG.get("asr_backup_model")
     
     context_text = asr_context if asr_context else ""
 
     if not current_api_key:
-        raise Exception("DASHSCOPE_API_KEY (LLM_API_KEY) 未设置")
+        raise Exception("DASHSCOPE_API_KEY 未设置")
     
     if not os.path.exists(audio_path):
         raise FileNotFoundError(f"音频文件不存在: {audio_path}")
 
-    # 构建尝试列表：[主模型, 备选模型]
     models_to_try = [model_name]
     if backup_model and backup_model != model_name:
         models_to_try.append(backup_model)
     
-    # 遍历尝试
     for i, current_model in enumerate(models_to_try):
         try:
-            # 调用辅助函数执行转录
-            result = _execute_transcription(current_api_key, current_model, audio_path, context_text)
+            result = _execute_transcription(current_api_key, current_model, audio_path, context_text, start_offset_seconds)
             
             if result is not None:
                 return result
             
         except Exception as e:
-            # 检查是否为限流相关错误
             err_str = str(e).lower()
             is_rate_limit = "429" in err_str or "quota" in err_str or "rate" in err_str
             
-            # 如果是限流错误，且还有下一个模型可试，则切换
             if is_rate_limit:
                 if i < len(models_to_try) - 1:
-                    # 可以在这里加一个简单的 print 提示切换，或者直接 continue
-                    time.sleep(1) # 稍作缓冲
+                    time.sleep(1)
                     continue
-            
-            # 如果不是限流错误，或者已经没有备用模型，则抛出异常
-            # 这会触发 @retry 装饰器进行指数退避重试
             raise e
 
     return None
