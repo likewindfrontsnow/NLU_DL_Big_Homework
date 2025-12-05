@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import dashscope
+from dashscope.audio.asr import Transcription
 import tempfile
 import wave
 import struct
@@ -9,7 +10,6 @@ from http import HTTPStatus
 from config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS
 
 def _create_dummy_wav(duration_sec=0.5):
-
     temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     try:
         with wave.open(temp.name, 'w') as wav_file:
@@ -22,10 +22,12 @@ def _create_dummy_wav(duration_sec=0.5):
             for _ in range(n_frames):
                 wav_file.writeframes(struct.pack('h', 0))
         return temp.name
-    except Exception as e:
-        print(f"创建测试音频失败: {e}")
+    except Exception:
         if os.path.exists(temp.name):
-            os.remove(temp.name)
+            try:
+                os.remove(temp.name)
+            except:
+                pass
         return None
 
 def verify_llm_model(api_key: str, base_url: str, model_name: str):
@@ -55,17 +57,15 @@ def verify_llm_model(api_key: str, base_url: str, model_name: str):
         try:
             err_data = response.json()
             err_msg = err_data.get('error', {}).get('message') or err_data.get('message') or str(err_data)
-            err_code = err_data.get('error', {}).get('code') or err_data.get('code')
         except:
             err_msg = response.text
-            err_code = response.status_code
 
         if response.status_code == 401:
             return False, f"❌ 认证失败 (401): API Key 无效或过期。详情: {err_msg}"
         elif response.status_code == 404:
-            return False, f"❌ 模型不存在 (404): 服务端找不到模型 '{model_name}'，请检查拼写。详情: {err_msg}"
+            return False, f"❌ 模型不存在 (404): 服务端找不到模型 '{model_name}'。详情: {err_msg}"
         elif response.status_code == 429:
-            return False, f"❌ 请求过多或欠费 (429): 触发限流或余额不足。详情: {err_msg}"
+            return False, f"❌ 请求过多或欠费 (429)。详情: {err_msg}"
         else:
             return False, f"❌ 未知错误 ({response.status_code}): {err_msg}"
 
@@ -84,39 +84,39 @@ def verify_asr_model(api_key: str, model_name: str):
     if not dummy_audio_path:
         return False, "本地环境错误: 无法生成测试音频文件"
 
+    abs_audio_path = os.path.abspath(dummy_audio_path)
+    dashscope.api_key = api_key
+    
+    is_async_model = "filetrans" in model_name or "fun-asr" in model_name
+
     try:
-        dashscope.api_key = api_key
-        abs_audio_path = os.path.abspath(dummy_audio_path)
-        
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"audio": f"file://{abs_audio_path}"}
-                ]
-            }
-        ]
-
-        response = dashscope.MultiModalConversation.call(
-            model=model_name,
-            messages=messages,
-        )
-
-        if response.status_code == HTTPStatus.OK:
-            return True, "✅ 验证通过：模型可用且 Key 有效。"
-        
-        else:
-            code = response.code
-            message = response.message
+        if is_async_model:
+            response = Transcription.async_call(
+                model=model_name,
+                file_urls=[f"file://{abs_audio_path}"],
+            )
             
-            if "InvalidApiKey" in code:
-                return False, f"❌ 认证失败: API Key 无效。({code})"
-            elif "ModelNotFound" in code or "InvalidModel" in code:
-                return False, f"❌ 模型不存在: 无法找到模型 '{model_name}'。({code})"
-            elif "Arrears" in code:
-                return False, f"❌ 账户欠费: 请检查阿里云账户余额。({code})"
+            if response.status_code == HTTPStatus.OK:
+                return True, "✅ 验证通过：模型可用 (异步提交成功)。"
             else:
-                return False, f"❌ 调用失败: {message} ({code})"
+                return False, f"❌ 调用失败: {response.message} ({response.code})"
+                
+        else:
+            messages = [
+                {
+                    "role": "user",
+                    "content": [{"audio": f"file://{abs_audio_path}"}]
+                }
+            ]
+            response = dashscope.MultiModalConversation.call(
+                model=model_name,
+                messages=messages,
+            )
+
+            if response.status_code == HTTPStatus.OK:
+                return True, "✅ 验证通过：模型可用。"
+            else:
+                return False, f"❌ 调用失败: {response.message} ({response.code})"
 
     except Exception as e:
         return False, f"❌ SDK 调用发生异常: {str(e)}"
@@ -129,9 +129,6 @@ def verify_asr_model(api_key: str, model_name: str):
                 pass
 
 def run_full_check():
-    """
-    读取 config.py 中的配置，对当前选中的 LLM 和 ASR 进行验证。
-    """
     print("="*60)
     print("🤖 模型可用性深度验证程序 (Model Verifier)")
     print("="*60)
@@ -143,7 +140,7 @@ def run_full_check():
     current_base_url = LLM_CONFIG.get("base_url")
     current_llm = LLM_CONFIG.get("model")
     
-    target_asr = "qwen-audio-asr-latest"
+    target_asr = "fun-asr-mtl" 
 
     if not current_api_key:
         print("❌ 错误：未在 config.py 或环境变量中找到 API Key。请先配置 .env 文件。")
@@ -154,18 +151,13 @@ def run_full_check():
     print(msg_llm)
 
     print(f"\n[2/2] 正在验证 ASR 模型: {target_asr}")
-    if "qwen" not in target_asr.lower() and "paraformer" not in target_asr.lower():
+    if "qwen" not in target_asr.lower() and "paraformer" not in target_asr.lower() and "fun-asr" not in target_asr.lower():
         print("⚠️ 跳过 ASR 验证：当前验证器仅支持 Qwen/DashScope 系列 ASR 模型。")
     else:
         success_asr, msg_asr = verify_asr_model(current_api_key, target_asr)
         print(msg_asr)
 
     print("\n" + "="*60)
-    if success_llm and (success_asr if 'success_asr' in locals() else True):
-        print("🎉 所有检查项通过！系统状态良好。")
-    else:
-        print("⚠️ 发现潜在问题，请根据上方错误提示进行修正。")
-    print("="*60)
 
 # if __name__ == "__main__":
 #     run_full_check()

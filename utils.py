@@ -1,34 +1,37 @@
-# utils.py
 import time
 import functools
+import random
 
-def retry(max_retries=3, delay=2, allowed_exceptions=()):
-    """
-    A decorator to retry a function if it raises an exception.
-
-    :param max_retries: Maximum number of retries.
-    :param delay: Delay between retries in seconds.
-    :param allowed_exceptions: A tuple of exceptions that should trigger a retry. 
-                               If empty, retries on any Exception.
-    """
+def retry(max_retries=3, delay=2, backoff_factor=2, allowed_exceptions=()):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             attempts = 0
+            current_delay = delay
+            
             while attempts < max_retries:
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
-                    # If specific exceptions are listed, only retry for them.
+                    # 如果指定了允许重试的异常，且当前异常不在列表中，则直接抛出
                     if allowed_exceptions and not isinstance(e, allowed_exceptions):
-                        raise # Re-raise exception if it's not in the allowed list
+                        raise
 
                     attempts += 1
                     if attempts >= max_retries:
-                        print(f"Function '{func.__name__}' failed after {max_retries} attempts. Re-raising last exception.")
+                        print(f"Function '{func.__name__}' failed after {max_retries} attempts.")
                         raise e
                     
-                    print(f"Attempt {attempts}/{max_retries} for '{func.__name__}' failed with error: {e}. Retrying in {delay} seconds...")
-                    time.sleep(delay)
+                    # 检查是否为限流错误，如果是，添加一点随机抖动
+                    error_str = str(e).lower()
+                    if "429" in error_str or "quota" in error_str:
+                        sleep_time = current_delay * (0.5 + random.random())
+                    else:
+                        sleep_time = current_delay
+                    
+                    print(f"Attempt {attempts}/{max_retries} failed: {e}. Retrying in {sleep_time:.2f}s...")
+                    
+                    time.sleep(sleep_time)
+                    current_delay *= backoff_factor 
         return wrapper
     return decorator

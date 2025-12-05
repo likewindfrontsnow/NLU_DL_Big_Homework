@@ -174,7 +174,7 @@ else:
         )
         
         whisper_model_size = "tiny" 
-        qwen_asr_model = "qwen3-asr-flash"
+        qwen_asr_model = "qwen-audio-asr-latest"
         
         if transcription_provider == "Local Whisper":
             whisper_model_size = st.selectbox(
@@ -195,6 +195,15 @@ else:
                 disabled=is_busy,
                 help="选择用于语音转录的模型。"
             )
+
+            backup_options = ["(无备选)"] + SUPPORTED_ASR_MODELS
+            selected_backup = st.selectbox(
+                "请选择备选模型 (遇到限流时自动切换):",
+                backup_options,
+                index=0,
+                disabled=is_busy
+            )
+            LLM_CONFIG["asr_backup_model"] = None if selected_backup == "(无备选)" else selected_backup
         
         if transcription_provider == "Qwen API":
             # [修改点 2] 仅当模型在支持列表中时，才显示上下文输入框

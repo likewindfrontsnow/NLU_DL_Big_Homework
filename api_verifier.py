@@ -1,9 +1,9 @@
-# api_verifier.py
 import requests
 import sys
 from config import LLM_CONFIG
 
 def check_api_connectivity(config: dict) -> bool:
+    
     print("--- 正在检测 API 连通性与密钥有效性 ---")
     
     api_key = config.get('api_key')

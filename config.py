@@ -37,26 +37,13 @@ SUPPORTED_ASR_MODELS = [
     "qwen3-omni-30b-a3b-captioner",
     "qwen3-asr-flash-filetrans",
     "qwen3-asr-flash",   
-    "fun-asr-mtl",
     "qwen-audio-turbo-latest",
     "qwen-audio-asr-latest",    
-    "paraformer-8k-v1",
-    "paraformer-8k-v2",
-    "paraformer-v2",
-    "paraformer-v1",
-    "paraformer-mtl-v1",
-    "qwen3-asr-flash-realtime",
-    "fun-asr-realtime",
-    "paraformer-realtime-8k-v2",
-    "paraformer-realtime-v2",
-    "paraformer-realtime-8k-v1",
-    "paraformer-realtime-v1",
 ]
 
 ASR_MODELS_WITH_CONTEXT_SUPPORT=[
     "qwen3-asr-flash-filetrans",
     "qwen3-asr-flash",   
-
 ]
 
 LLM_CONFIG = {
@@ -69,4 +56,5 @@ LLM_CONFIG = {
     "supported_iv_models": SUPPORTED_IV_MODELS,
     "supported_tts_models": SUPPORTED_TTS_MODELS,
     "supported_asr_models": SUPPORTED_ASR_MODELS,
+    "asr_backup_model": "qwen-audio-asr-latest",
 }
