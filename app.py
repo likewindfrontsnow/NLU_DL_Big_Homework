@@ -1,15 +1,32 @@
-# app.py
 import streamlit as st
 import os
 import time
-import io
-from contextlib import redirect_stdout
 from main import main_process_generator
 from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT
 from ai_services.llm_api import refine_llm_generation
 from dotenv import set_key
-# 引入 model_verifier 中的验证函数，替代旧的 api_verifier
 from core.model_verifier import verify_llm_model, verify_asr_model
+
+VIDEO_EXTS = {'mp4', 'mov', 'mpeg', 'webm'}
+AUDIO_EXTS = {'mp3', 'm4a', 'wav', 'amr', 'mpga'}
+DOC_EXTS = {'txt', 'md', 'mdx', 'markdown', 'pdf', 'html', 'xlsx', 'xls', 'doc', 'docx', 'csv', 'eml', 'msg', 'pptx', 'ppt', 'xml', 'epub'}
+ALL_EXTS = list(VIDEO_EXTS | AUDIO_EXTS | DOC_EXTS)
+
+INSTRUCTION_OPTIONS = [
+    "请尤其注意老师提到的与考试相关的部分"
+    "请将所有专业术语中英文对照列出",
+    "请使用更多的表格来对比易混淆的概念",
+    "语气要更加幽默风趣，像个老朋友在聊天",
+    "只保留核心考点，极度精简，不要废话",
+    "为每个章节添加 emoji 图标，增加可读性",
+    "请详细解释所有缩写词 (Abbreviations)"
+]
+
+NOTE_TYPE_MAPPING = {
+    "STEM": "理工科",
+    "HASS": "人文社科",
+    "Medical": "医学"
+}
 
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
@@ -33,40 +50,25 @@ def _save_key(key):
         LLM_CONFIG["provider_name"] = "DashCope(Qwen)"
         set_key(env_path, "LLM_PROVIDER_NAME", "DashCope(Qwen)")
 
-# --- [新增] 启动自检逻辑 ---
-# 使用 session_state 确保仅在会话开始（刷新页面）时检查一次，而不是每次交互都检查
 if "has_validated_on_startup" not in st.session_state:
     st.session_state.has_validated_on_startup = False
 
-# 如果配置中有 Key，且尚未在本次会话中验证过
 if LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup:
     with st.spinner("🔄 正在启动自检：验证 API Key 有效性..."):
-        # 获取验证所需的参数，提供默认值防止报错
         check_key = LLM_CONFIG["api_key"]
         check_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         check_model = LLM_CONFIG.get("model", "qwen-plus")
         
-        # 调用验证函数
         is_valid, msg = verify_llm_model(check_key, check_url, check_model)
         
         if is_valid:
-            # 验证通过，标记为已验证
             st.session_state.has_validated_on_startup = True
-            # 可选：显示一个小的成功提示
-            # st.toast("✅ API Key 验证通过", icon="🔐")
         else:
-            # 验证失败
             st.error(f"⚠️ 启动检测警告：当前保存的 API Key 无效或过期。\n\n**原因**: {msg}")
             st.warning("请在下方重新输入有效的 API Key。")
-            
-            # 关键步骤：清空内存中的 Key，强制进入下方的输入流程
             LLM_CONFIG["api_key"] = ""
-            # 注意：这里我们不自动清空 .env 文件，防止因网络波动误删，而是让用户输入新 Key 覆盖
-
-# --- 主流程 ---
 
 if not LLM_CONFIG.get("api_key"):
-    # 如果 Key 为空（可能是首次使用，也可能是上面自检失败被置空了）
     if not st.session_state.get("has_validated_on_startup", False):
          st.markdown("### 👋 欢迎使用")
     
@@ -87,18 +89,17 @@ if not LLM_CONFIG.get("api_key"):
         if new_key and new_key.startswith("sk-"):
             st.info("正在连接服务器验证 Key 的有效性...")
             
-            # 使用 model_verifier 进行验证
             verify_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            verify_model = "qwen-plus" # 验证时默认使用通用的模型
+            verify_model = "qwen-plus"
             
             is_valid, msg = verify_llm_model(new_key, verify_url, verify_model)
 
             if is_valid:
                 _save_key(new_key)
-                st.session_state.has_validated_on_startup = True # 标记为已验证
+                st.session_state.has_validated_on_startup = True
                 st.success("✅ API Key 验证通过并已保存！")
                 time.sleep(1)
-                st.rerun() # 重新运行以进入主界面
+                st.rerun()
             else:
                 st.error(f"❌ 验证失败：{msg}")
                 st.markdown("👉 **请检查您的 Key 是否正确，或网络是否通畅。**")
@@ -106,38 +107,28 @@ if not LLM_CONFIG.get("api_key"):
             st.error("Key 格式不正确。它应该以 `sk-` 开头。")
 
 else:
-    # --- Key 存在且有效，进入应用主界面 ---
     st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
 
-    if "processing_started" not in st.session_state:
-        st.session_state.processing_started = False
-    if "current_notes" not in st.session_state:
-        st.session_state.current_notes = None
-    if "full_transcript" not in st.session_state:
-        st.session_state.full_transcript = None
-    if "output_filename" not in st.session_state:
-        st.session_state.output_filename = "我的学习笔记"
-    if "last_uploaded_filename" not in st.session_state:
-        st.session_state.last_uploaded_filename = None
-    if "processing_has_failed" not in st.session_state:
-        st.session_state.processing_has_failed = False
-    if "api_key_invalid" not in st.session_state:
-        st.session_state.api_key_invalid = False
-    if "asr_context" not in st.session_state:
-        st.session_state.asr_context = ""
-    if "note_type" not in st.session_state:
-        st.session_state.note_type = "STEM"
-    if "stop_requested" not in st.session_state:
-        st.session_state.stop_requested = False
-    if "refinement_in_progress" not in st.session_state:
-        st.session_state.refinement_in_progress = False
-    if "refinement_stop_requested" not in st.session_state:
-        st.session_state.refinement_stop_requested = False
+    default_states = {
+        "processing_started": False,
+        "current_notes": None,
+        "full_transcript": None,
+        "output_filename": "我的学习笔记",
+        "last_uploaded_filename": None,
+        "processing_has_failed": False,
+        "api_key_invalid": False,
+        "asr_context": "",
+        "note_type": "STEM",
+        "stop_requested": False,
+        "refinement_in_progress": False,
+        "refinement_stop_requested": False,
+        "preset_feedback": "(请选择一个快捷指令)",
+        "custom_feedback": ""
+    }
 
-    if "preset_feedback" not in st.session_state:
-        st.session_state.preset_feedback = "(请选择一个快捷指令)"
-    if "custom_feedback" not in st.session_state:
-        st.session_state.custom_feedback = ""
+    for key, value in default_states.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
     is_busy = st.session_state.processing_started or st.session_state.refinement_in_progress
 
@@ -168,19 +159,13 @@ else:
             disabled=is_busy
         )
 
-        note_type_mapping = {
-            "STEM": "理工科",
-            "HASS": "人文社科",
-            "Medical": "医学"
-        }
-
         note_type_option = st.radio(
             "请选择笔记类型:",
             ("STEM", "HASS","Medical"),
             index=0, 
             key="note_type", 
             horizontal=True,
-            format_func=lambda x: note_type_mapping.get(x, x),
+            format_func=lambda x: NOTE_TYPE_MAPPING.get(x, x),
             disabled=is_busy
         )
 
@@ -191,10 +176,7 @@ else:
             ("Qwen API","Local Whisper"),
             index=0,
             key="transcription_provider",
-            help="""
-            - **Local Whisper**: 在您本地电脑上运行，速度取决于您的电脑配置，首次加载较慢。
-            - **Qwen API**: 调用阿里云 Qwen API，相比Local Whisper速度更快，精度更高。
-            """,
+            help="选择转录服务。",
             disabled=is_busy
         )
         
@@ -206,10 +188,9 @@ else:
                 "请选择 Whisper 模型:",
                 ("tiny", "base", "small", "medium", "large"),
                 index=0,
-                help="模型越大，转录越准确，但速度越慢。'tiny' 最快，'large' 最准。首次使用模型时，程序会先下载模型文件（可能需要几分钟）。",
+                help="模型越大，转录越准确，但速度越慢。",
                 disabled=is_busy
             )
-            # 切换到 Local Whisper 时清空上下文
             if st.session_state.asr_context != "":
                 st.session_state.asr_context = "" 
         else:
@@ -238,7 +219,7 @@ else:
                     "输入热词 (用于提升 ASR 准确率)",
                     value=st.session_state.asr_context,
                     placeholder="例如: Bulge Bracket, Boutique, 投行...",
-                    help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名，用逗号或段落分隔均可。",
+                    help="在此处输入希望 Qwen API 优先识别的专业词汇、人名或地名。",
                     disabled=is_busy
                 )
             else:
@@ -288,7 +269,7 @@ else:
         stream_output = st.toggle(
             "启用笔记流式输出", 
             value=True, 
-            help="启用后，笔记内容将实时逐字显示。禁用则会在所有内容生成后一次性显示。",
+            help="启用后，笔记内容将实时逐字显示。",
             disabled=is_busy
         )
 
@@ -296,7 +277,7 @@ else:
         keep_temp_files = st.checkbox(
             "保留语音转文字稿", 
             value=False, 
-            help="勾选后将保留语音转文字生成的 .txt 文字稿，上传的原始文件总会被自动删除。",
+            help="勾选后将保留语音转文字生成的 .txt 文字稿。",
             disabled=is_busy
         )
 
@@ -304,19 +285,9 @@ else:
         with st.expander("🎨 个性化定制 (生成前)", expanded=False):
             st.markdown("在这里添加对笔记生成的特殊要求。")
             
-            instruction_options = [
-                "请尤其注意老师提到的与考试相关的部分"
-                "请将所有专业术语中英文对照列出",
-                "请使用更多的表格来对比易混淆的概念",
-                "语气要更加幽默风趣，像个老朋友在聊天",
-                "只保留核心考点，极度精简，不要废话",
-                "为每个章节添加 emoji 图标，增加可读性",
-                "请详细解释所有缩写词 (Abbreviations)"
-            ]
-            
             selected_instructions = st.multiselect(
                 "快捷指令 (多选):",
-                instruction_options,
+                INSTRUCTION_OPTIONS,
                 key="selected_instructions_ui",
                 disabled=is_busy
             )
@@ -336,21 +307,16 @@ else:
 
         st.info("请在上方配置好参数后，上传文件开始处理。")
 
-    video_exts = {'mp4', 'mov','mpeg','webm'}
-    audio_exts = {'mp3','m4a','wav','amr','mpga'}
-    doc_exts = {'txt','md','mdx','markdown','pdf','html','xlsx','xls','doc','docx','csv','eml','msg','pptx','ppt','xml','epub'}
-    all_exts = list(video_exts | audio_exts | doc_exts)
-
     with st.expander("查看所有支持的文件格式"):
         st.markdown(f"""
-        - **视频文件**: `{', '.join(sorted(list(video_exts)))}`
-        - **音频文件**: `{', '.join(sorted(list(audio_exts)))}`
-        - **文档文件**: `{', '.join(sorted(list(doc_exts)))}`
+        - **视频文件**: `{', '.join(sorted(list(VIDEO_EXTS)))}`
+        - **音频文件**: `{', '.join(sorted(list(AUDIO_EXTS)))}`
+        - **文档文件**: `{', '.join(sorted(list(DOC_EXTS)))}`
         """)
 
     uploaded_file = st.file_uploader(
         "上传视频、音频或文档", 
-        type=all_exts,
+        type=ALL_EXTS,
         disabled=is_busy
     )
 
