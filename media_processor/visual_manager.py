@@ -27,10 +27,11 @@ class VisualManager:
         interval_seconds: int = 45, 
         mode: str = "general",
         max_workers: int = 4,
-        model: str = "qwen3-vl-plus"
+        model: str = "qwen3-vl-plus",
+        keep_intermediate_files: bool = False
     ) -> str:
         base_dir = os.path.dirname(os.path.abspath(video_path))
-        temp_frame_dir = os.path.join(base_dir, "temp_frames_for_analysis")
+        temp_frame_dir = os.path.join("temp", "vlm_frames_output")
         
         frames = self.extractor.extract_smart_frames(
             video_path, 
@@ -76,10 +77,15 @@ class VisualManager:
         for timestamp, desc in results:
             summary_lines.append(f"**[{timestamp}]**\n{desc}\n")
             
-        try:
-            if os.path.exists(temp_frame_dir):
-                shutil.rmtree(temp_frame_dir)
-        except Exception:
-            pass
+        final_report = "\n".join(summary_lines)
 
-        return "\n".join(summary_lines)
+        if not keep_intermediate_files:
+            try:
+                if os.path.exists(temp_frame_dir):
+                    shutil.rmtree(temp_frame_dir)
+            except Exception:
+                pass
+        else:
+            print(f"  > [VLM] 截图已保留至: {temp_frame_dir}")
+
+        return final_report

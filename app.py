@@ -245,12 +245,20 @@ else:
         )
         
         selected_vlm_model = "qwen3-vl-plus"
+        keep_visual_files = False
+
         if enable_visual_analysis:
             selected_vlm_model = st.selectbox(
                 "请选择 VLM 模型:",
                 SUPPORTED_VLM,
                 index=0,
                 disabled=is_busy
+            )
+            keep_visual_files = st.checkbox(
+                "保留视觉分析中间文件 (截图 & 报告)",
+                value=False,
+                disabled=is_busy,
+                help="勾选后，抽取的关键帧和生成的视觉报告将不会被自动删除。"
             )
 
         st.markdown("---")
@@ -446,7 +454,8 @@ else:
             final_custom_instructions,
             qwen_asr_model=qwen_asr_model,
             enable_visual_analysis=enable_visual_analysis,
-            vlm_model_name=selected_vlm_model
+            vlm_model_name=selected_vlm_model,
+            keep_visual_files=keep_visual_files
         )
         
         for event_type, value, *rest in generator:
