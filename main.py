@@ -7,18 +7,37 @@ import shutil
 from config import LLM_CONFIG
 from video_processor.splitter import split_media_to_audio_chunks_generator
 from video_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model, transcribe_with_qwen
+
+# [新增] 导入视觉管理器
+# 使用 try-except 兼容不同的运行环境（直接运行或作为包调用）
+try:
+    from video_processor.visual_manager import VisualManager
+except ImportError:
+    from .video_processor.visual_manager import VisualManager
+
 from llm_api import run_llm_generation, refine_llm_generation 
 
 # 生成器函数，处理流程并实时产出进度与LLM文本块
-def main_process_generator(input_path: str,  output_filename: str, whisper_model_size: str, stream_output: bool, transcription_provider: str, note_type: str, asr_context: str | None = None, additional_instructions: str = "",qwen_asr_model:str="qwen3-asr-flash"): 
+def main_process_generator(
+    input_path: str,  
+    output_filename: str, 
+    whisper_model_size: str, 
+    stream_output: bool, 
+    transcription_provider: str, 
+    note_type: str, 
+    asr_context: str | None = None, 
+    additional_instructions: str = "",
+    qwen_asr_model: str = "qwen3-asr-flash",
+    enable_visual_analysis: bool = False # [新增] 接收前端传递的视觉分析开关
+): 
     # 一些初始化工作
-    temp_root="temp"
+    temp_root = "temp"
     output_dir = os.path.join(temp_root, "output_chunks")
-    final_output_dir="output"
-    if(not os.path.exists(final_output_dir)):
+    final_output_dir = "output"
+    if not os.path.exists(final_output_dir):
         os.makedirs(final_output_dir)
 
-    final_notes_save_path= os.path.join(final_output_dir, f"{output_filename}.md")
+    final_notes_save_path = os.path.join(final_output_dir, f"{output_filename}.md")
     if os.path.exists(output_dir):
         try:
             shutil.rmtree(output_dir) 
@@ -44,9 +63,8 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
     current_progress = 0
     full_transcript = ""
 
-    # 运行llm并处理结果
+    # 内部帮助函数：运行 LLM 并处理结果
     def run_llm_and_yield_results():
-        
         final_text = "" 
         
         try:
@@ -55,7 +73,7 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
             stream_status = "流式" if stream_output else "非流式"
             yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status}, 类型: {note_type})..."
             
-            # 转录稿full_transcript传输给llm生成笔记
+            # 将最终的转录稿（可能包含视觉内容）传输给 LLM
             llm_call_result = run_llm_generation(full_transcript, stream_output, note_type, additional_instructions)
             
             if stream_output:
@@ -130,7 +148,24 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
     # === 视频和音频文件工作流 ===
     elif file_ext in video_exts or file_ext in audio_exts:
         is_video = file_ext in video_exts
-        total_steps = 4 if is_video else 3
+        
+        # [修改] 判断是否需要执行视觉分析
+        # 条件：必须是视频文件 且 用户在前端开启了开关
+        do_visual_analysis = is_video and enable_visual_analysis
+        
+        # 动态计算总步骤数
+        # 如果不做视觉分析：1.切分 2.转录 3.生成笔记 (共3步)
+        # 如果做视觉分析：1.切分 2.转录 3.视觉分析 4.生成笔记 (共4步)
+        # 注意：之前的代码在 is_video 时可能会把“汇总文字稿”单算一步，这里为了逻辑清晰，我们重新梳理步骤：
+        # Step 1: 切分
+        # Step 2: 转录
+        # Step 3: (可选) 视觉分析
+        # Step 4: 汇总与生成
+        
+        # 这里为了保持进度条连贯性，我们按以下逻辑设定：
+        # 基础步骤: 切分(1) + 转录(1) + 生成(1) = 3
+        # 额外步骤: 视觉分析(+1)
+        total_steps = 4 if do_visual_analysis else 3
         
         step_name = "视频" if is_video else "音频"
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在切分{step_name}为音频块..."
@@ -192,7 +227,7 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
                 elif transcription_provider == "Qwen API":
                     print("--- 开始使用 Qwen API (模型: qwen3-asr-flash) 进行转录 ---")
                     future_to_index = {
-                        executor.submit(transcribe_with_qwen, chunk, asr_context,qwen_asr_model): i
+                        executor.submit(transcribe_with_qwen, chunk, asr_context, qwen_asr_model): i
                         for i, chunk in enumerate(audio_chunks)
                     }
 
@@ -233,11 +268,51 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
         yield "progress", current_progress / total_steps, "所有音频块转录完成！"
         shutil.rmtree(output_dir, ignore_errors=True)
 
-        if is_video:
-            yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在汇总文字稿并保存..."
+        # 汇总音频转录稿
+        raw_audio_transcript = "\n\n".join(filter(None, all_transcripts))
+        full_transcript = raw_audio_transcript # 默认情况下，全文就是音频转录稿
+
+        # [新增] 视觉分析流程
+        if do_visual_analysis:
+            yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在进行视频视觉内容分析 (VLM)..."
+            
+            try:
+                # 统一使用综合课堂模式，让模型自动判断 PPT/板书
+                vlm_mode = "lecture_mixed"
+                
+                yield "sub_progress", 0.0, f"模式: {vlm_mode} | 正在抽帧并调用 VLM..."
+                
+                vm = VisualManager()
+                # 间隔设为 60s 以节省 Token，max_workers 保持 4
+                visual_report = vm.process_video_for_visual_summary(
+                    input_path, 
+                    interval_seconds=60, 
+                    mode=vlm_mode,
+                    max_workers=4
+                )
+                
+                yield "sub_progress", 1.0, "✅ 视觉分析完成。"
+                
+                # 将视觉报告合并到 full_transcript 中
+                full_transcript = (
+                    "【以下是视频的音频转录内容】\n"
+                    f"{raw_audio_transcript}\n\n"
+                    "========================================\n"
+                    "【以下是视频画面的视觉分析报告（包含PPT/板书内容）】\n"
+                    "请将以下视觉信息与音频内容结合，生成完整的笔记。如果视觉内容包含公式或图表，请重点整合。\n\n"
+                    f"{visual_report}"
+                )
+                
+                current_progress += 1
+                yield "progress", current_progress / total_steps, "视觉分析完成，正在汇总所有内容..."
+
+            except Exception as e:
+                print(f"⚠️ 视觉分析模块非致命错误: {e}")
+                yield "sub_progress", 1.0, f"⚠️ 视觉分析遇到问题，将仅使用音频内容继续。"
+                # 出错了也不中断主流程，优雅降级，仅使用音频内容
+                full_transcript = raw_audio_transcript
         
-        full_transcript = "\n\n".join(filter(None, all_transcripts))
-        
+        # 保存汇总后的文字稿（可能包含视觉内容）
         try:
             with open(transcript_save_path, 'w', encoding='utf-8') as f:
                 f.write(full_transcript)
@@ -246,10 +321,6 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
 
         yield "transcript", full_transcript 
 
-        if is_video:
-            current_progress += 1
-            yield "progress", current_progress / total_steps, "文字稿汇总完成。"
-            
         provider_name = LLM_CONFIG.get('provider_name', 'LLM')
         yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {provider_name}..."
 
@@ -278,7 +349,7 @@ def main_process_generator(input_path: str,  output_filename: str, whisper_model
         return
 
 
-# 用于运行、打印生成器输出
+# 用于运行、打印生成器输出 (本地测试用)
 def run_test(test_file_path, provider="", model_size="tiny", context=None, stream=False):
     print(f"\n>>> 正在测试文件: {test_file_path} (服务: {provider})")
     
@@ -296,7 +367,8 @@ def run_test(test_file_path, provider="", model_size="tiny", context=None, strea
             stream_output=stream,
             transcription_provider=provider,
             asr_context=context,
-            note_type="STEM"
+            note_type="STEM",
+            enable_visual_analysis=True # 测试时默认开启
         )
 
         final_path = None
@@ -330,35 +402,3 @@ def run_test(test_file_path, provider="", model_size="tiny", context=None, strea
         print(f"\n!!! [测试时发生意外异常] {e}")
         import traceback
         traceback.print_exc()
-
-
-
-# 测试
-# if __name__ == "__main__":
-#     print("--- [主模块测试] 开始 ---")
-
-# # **测试 1: 文本文档**
-# print("--- 开始测试 [文本文档] ---")
-# run_test(
-#     test_file_path="test_doc.txt",
-#     provider="Local Whisper"
-# )
-
-# **测试 2: 音频文件 (Local Whisper)**
-# print("--- 开始测试 [音频文件 - Local Whisper] ---")
-# run_test(
-#     test_file_path="test_audio.mp3", 
-#     provider="Local Whisper",
-#     model_size="tiny",
-#     stream=False 
-# )
-
-# **测试 3: 音频文件 (Qwen API)**
-# print("--- 开始测试 [音频文件 - Qwen API] ---")
-# run_test(
-#     test_file_path="test_audio.mp3",
-#     provider="Qwen API",
-#     context="财经, 投行, A股", # 测试上下文
-#     stream=False
-# )
-    

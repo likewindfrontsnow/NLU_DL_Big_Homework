@@ -22,6 +22,24 @@ VLM_PROMPTS = {
         "请详细描述这张图片的内容，包括主要物体、文字信息（如果有）以及场景氛围。"
     ),
     
+    # [新增] 综合课堂模式：同时处理 PPT、板书和混合场景
+    "lecture_mixed": (
+        "这张图片来自于课程教学视频的截屏。画面内容可能是 **PowerPoint 幻灯片**、**老师的板书 (黑板/白板)**，或者是 **二者的混合**。\n"
+        "任务：请充当专业的学术 OCR 助手，精准提取并整理画面中的核心知识信息。\n"
+        "**核心要求**：\n"
+        "1. **内容识别与区分**：\n"
+        "   - 如果是 **PPT**：按原标题层级还原文字，描述关键图表含义。\n"
+        "   - 如果是 **板书**：请仔细辨认手写体，按推导逻辑（从左到右、从上到下）整理内容。\n"
+        "   - 如果是 **混合场景**：请同时提取 PPT 和板书的内容，并简要注明来源（如“[PPT内容]... [板书补充]...”）。\n"
+        "2. **数学公式标准化**：\n"
+        "   - 画面中出现的所有数学公式、变量符号，**必须** 转换为标准的 **LaTeX** 格式（例如 $E=mc^2$）。\n"
+        "   - 即使是手写模糊的公式，也要结合上下文逻辑进行推断和补全。\n"
+        "3. **去除无关干扰**：\n"
+        "   - 忽略视频播放器的界面 UI、无关的人物背景或遮挡物，只关注教学内容本身。\n"
+        "4. **输出格式**：\n"
+        "   - 直接输出整理后的 Markdown 文本，不要包含“这是一张PPT”等废话，直接罗列知识点。"
+    ),
+
     "ppt": (
         "这张图片是课程的PPT幻灯片。\n"
         "任务：请充当专业的OCR和内容整理员，将图片内容转换为结构化的文本。\n"
@@ -48,7 +66,8 @@ VLM_PROMPTS = {
 @retry(max_retries=3, delay=2, backoff_factor=2)
 def analyze_image(
     image_path: str, 
-    mode: Literal["general", "ppt", "handwriting"] = "general",
+    # 修改类型注解以包含新模式
+    mode: Literal["general", "ppt", "handwriting", "lecture_mixed"] = "general",
     custom_prompt: Optional[str] = None,
     model: str = "qwen3-vl-plus"
 ) -> str:
@@ -56,7 +75,7 @@ def analyze_image(
     调用视觉大模型 (VLM) 对图片进行分析。
 
     :param image_path: 本地图片的绝对路径
-    :param mode: 模式选择 ("general" | "ppt" | "handwriting")，决定使用哪种预置 Prompt
+    :param mode: 模式选择 ("general" | "ppt" | "handwriting" | "lecture_mixed")
     :param custom_prompt: 如果提供，将覆盖 mode 对应的默认 Prompt
     :param model: 使用的模型名称
     :return: 模型的文本响应
@@ -141,23 +160,17 @@ if __name__ == "__main__":
     print("--- 开始测试 vlm_api.py (多模式) ---")
     
     # 修改这里的路径为你的一张真实图片路径
-    test_img = r"D:\Documents\111study\coding\Python\NLU-DL\NLU_DL_Big_Homework\test_ppt.jpg" 
+    test_img = r"test_ppt.jpg" 
     
     if not os.path.exists(test_img):
         print(f"提示: 请在当前目录下放置一张名为 '{test_img}' 的图片用于测试 PPT 模式。")
     else:
         try:
             # 测试 PPT 模式
-            print("\n🔍 测试 PPT 模式:")
-            res_ppt = analyze_image(test_img, mode="ppt")
+            print("\n🔍 测试 Lecture Mixed 模式:")
+            res_ppt = analyze_image(test_img, mode="lecture_mixed")
             print("-" * 20)
             print(res_ppt[:200] + "..." if len(res_ppt) > 200 else res_ppt)
 
-            # 测试 板书 模式 (用同一张图演示调用，实际场景请换图)
-            # print("\n🔍 测试 板书 模式:")
-            # res_board = analyze_image(test_img, mode="handwriting")
-            # print("-" * 20)
-            # print(res_board[:200] + "...")
-            
         except Exception as err:
             print(f"\n❌ 测试失败: {err}")

@@ -158,6 +158,14 @@ else:
             format_func=lambda x: note_type_mapping.get(x, x),
             disabled=is_busy
         )
+        
+        # [新增] 视觉分析开关
+        enable_visual_analysis = st.toggle(
+            "开启视频视觉分析 (VLM)",
+            value=False,
+            disabled=is_busy,
+            help="开启后，将从视频中提取 PPT 或板书画面，并使用视觉模型进行分析。这会增加 API 调用成本和处理时间，但能显著提升笔记中公式和图表的准确性。"
+        )
 
         st.markdown("---")
         st.subheader("语音转录 (ASR) 配置")
@@ -206,7 +214,6 @@ else:
             LLM_CONFIG["asr_backup_model"] = None if selected_backup == "(无备选)" else selected_backup
         
         if transcription_provider == "Qwen API":
-            # [修改点 2] 仅当模型在支持列表中时，才显示上下文输入框
             if qwen_asr_model in ASR_MODELS_WITH_CONTEXT_SUPPORT:
                 st.markdown("---")
                 st.subheader("ASR 上下文增强 (Qwen)")
@@ -218,7 +225,6 @@ else:
                     disabled=is_busy
                 )
             else:
-                # 如果用户切换到不支持的模型，清空上下文以免产生混淆或错误调用
                 if st.session_state.asr_context != "":
                      st.session_state.asr_context = ""
 
@@ -388,7 +394,9 @@ else:
             if st.session_state.asr_context:
                 asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
         
-        st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}**")
+        # [修改] 显示是否开启了视觉分析
+        visual_status_text = "✅ **已开启**" if enable_visual_analysis else "❌ **未开启**"
+        st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}** | 视觉分析: {visual_status_text}")
         
         llm_output_container = st.empty()
         full_llm_response = ""
@@ -419,7 +427,8 @@ else:
             st.session_state.note_type, 
             st.session_state.asr_context,
             final_custom_instructions,
-            qwen_asr_model=qwen_asr_model
+            qwen_asr_model=qwen_asr_model,
+            enable_visual_analysis=enable_visual_analysis # [修改] 传递用户选择
         )
         
         for event_type, value, *rest in generator:

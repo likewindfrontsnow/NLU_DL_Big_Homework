@@ -1,10 +1,17 @@
+# video_processor/visual_manager.py
 import os
 import concurrent.futures
 import re
 import shutil
 from typing import List, Tuple
-from frame_extractor import FrameExtractor
-from vlm_api import analyze_image
+
+# [修改点 1] 使用相对导入，以便在 main.py 中作为包被调用
+try:
+    from .frame_extractor import FrameExtractor
+except ImportError:
+    from frame_extractor import FrameExtractor # 兼容单独运行此脚本的情况
+
+from vlm_api import analyze_image # vlm_api 在根目录，直接导入即可
 
 class VisualManager:
     def __init__(self):
@@ -92,7 +99,7 @@ class VisualManager:
                     results.append(res)
                     completed_count += 1
                     # 简单的进度打印
-                    print(f"  > [VLM 进度] {completed_count}/{len(frames)} 帧处理完毕")
+                    # print(f"  > [VLM 进度] {completed_count}/{len(frames)} 帧处理完毕")
                 except Exception as e:
                     print(f"  > ❌ 线程异常: {e}")
 
