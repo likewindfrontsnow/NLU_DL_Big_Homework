@@ -1,16 +1,10 @@
 import subprocess
 import os
-import sys
 
 class FrameExtractor:
-    def __init__(self):
-        pass
-
     def _get_binary_path(self, binary_name: str) -> str:
         current_script_dir = os.path.dirname(os.path.abspath(__file__))
-        
         project_root = os.path.dirname(current_script_dir)
-        
         local_bin = os.path.join(project_root, "bin", binary_name + ".exe")
         
         if os.path.exists(local_bin):
@@ -19,7 +13,6 @@ class FrameExtractor:
         return binary_name
 
     def extract_smart_frames(self, video_path: str, interval_seconds: int = 30, scene_threshold: float = 0.2, output_dir: str = "extracted_frames"):
-
         if not os.path.exists(video_path):
             print(f"❌ 错误：找不到视频文件: {video_path}")
             return []
@@ -28,7 +21,6 @@ class FrameExtractor:
             os.makedirs(output_dir)
 
         ffmpeg_cmd = self._get_binary_path("ffmpeg")
-        
         output_pattern = os.path.join(output_dir, "frame_%03d.jpg")
 
         command = [
@@ -67,19 +59,3 @@ class FrameExtractor:
         except Exception as e:
             print(f"❌ 发生未知错误: {e}")
             return []
-
-if __name__ == "__main__":
-    extractor = FrameExtractor()
-    
-    test_video = r"D:\Documents\111study\coding\Python\NLU-DL\NLU_DL_Big_Homework\video_processor\test_video.mp4"
-    
-    
-    print(f"正在处理视频: {test_video}")
-    
-    frames = extractor.extract_smart_frames(
-        test_video, 
-        interval_seconds=30, 
-        scene_threshold=0.2
-    )
-    
-    print(f"共提取了 {len(frames)} 张图片。")
