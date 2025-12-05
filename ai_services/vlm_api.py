@@ -3,8 +3,8 @@ import os
 import dashscope
 from http import HTTPStatus
 from typing import Literal, Optional
-from config import DASHSCOPE_API_KEY
-from utils import retry
+from core.config import DASHSCOPE_API_KEY
+from core.utils import retry
 
 # 初始化 API Key
 if DASHSCOPE_API_KEY:

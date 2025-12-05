@@ -3,9 +3,9 @@ import requests
 import json
 import time
 from typing import Generator, Union
-from config import LLM_CONFIG 
+from core.config import LLM_CONFIG 
 from prompts import PROMPT_NOTES_STEM, PROMPT_NOTES_HASS, PROMPT_NOTES_REFINER,PROMPT_NOTES_MEDICAL
-from utils import retry 
+from core.utils import retry 
 
 def _handle_streaming_response(response: requests.Response) -> Generator[str, None, None]:
     for line in response.iter_lines():

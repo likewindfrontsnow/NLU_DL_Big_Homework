@@ -4,8 +4,8 @@ import whisper
 import threading
 import dashscope
 from dashscope.audio.asr import Transcription
-from config import LLM_CONFIG
-from utils import retry
+from core.config import LLM_CONFIG
+from core.utils import retry
 import subprocess
 import json
 import requests

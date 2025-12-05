@@ -4,14 +4,8 @@ import concurrent.futures
 import re
 import shutil
 from typing import List, Tuple
-
-# [修改点 1] 使用相对导入，以便在 main.py 中作为包被调用
-try:
-    from .frame_extractor import FrameExtractor
-except ImportError:
-    from frame_extractor import FrameExtractor # 兼容单独运行此脚本的情况
-
-from vlm_api import analyze_image # vlm_api 在根目录，直接导入即可
+from .frame_extractor import FrameExtractor
+from ..ai_services.vlm_api import analyze_image
 
 class VisualManager:
     def __init__(self):
