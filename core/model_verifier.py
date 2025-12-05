@@ -28,6 +28,35 @@ def _create_dummy_wav(duration_sec=0.5):
                 pass
         return None
 
+def _create_dummy_image():
+    temp = tempfile.NamedTemporaryFile(suffix=".bmp", delete=False)
+    try:
+        width, height = 32, 32
+        row_padding = (4 - (width * 3) % 4) % 4
+        file_size = 14 + 40 + (width * 3 + row_padding) * height
+        
+        bmp_header = struct.pack('<2sIHHI', b'BM', file_size, 0, 0, 54)
+        dib_header = struct.pack('<IiiHHIIIIII', 40, width, height, 1, 24, 0, 0, 0, 0, 0, 0)
+        
+        pixel_data = b'\xff\x00\x00' * width
+        padding_data = b'\x00' * row_padding
+        
+        with open(temp.name, "wb") as f:
+            f.write(bmp_header)
+            f.write(dib_header)
+            for _ in range(height):
+                f.write(pixel_data)
+                f.write(padding_data)
+                
+        return temp.name
+    except Exception:
+        if os.path.exists(temp.name):
+            try:
+                os.remove(temp.name)
+            except:
+                pass
+        return None
+
 def verify_llm_model(api_key: str, base_url: str, model_name: str):
     print(f"🔍 [LLM 验证] 正在检查模型: {model_name} ...")
     
@@ -123,5 +152,50 @@ def verify_asr_model(api_key: str, model_name: str):
         if os.path.exists(dummy_audio_path):
             try:
                 os.remove(dummy_audio_path)
+            except:
+                pass
+
+def verify_vlm_model(api_key: str, model_name: str):
+    print(f"🔍 [VLM 验证] 正在检查模型: {model_name} ...")
+
+    if not api_key:
+        return False, "缺少 DashScope API Key"
+
+    dummy_image_path = _create_dummy_image()
+    if not dummy_image_path:
+        return False, "本地环境错误: 无法生成测试图片文件"
+    
+    abs_image_path = os.path.abspath(dummy_image_path)
+    dashscope.api_key = api_key
+
+    try:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"image": f"file://{abs_image_path}"},
+                    {"text": "Describe this"},
+                ]
+            }
+        ]
+        
+        response = dashscope.MultiModalConversation.call(
+            model=model_name,
+            messages=messages,
+            result_format="message"
+        )
+
+        if response.status_code == HTTPStatus.OK:
+            return True, "✅ 验证通过：模型可用。"
+        else:
+            return False, f"❌ 调用失败: {response.message} ({response.code})"
+            
+    except Exception as e:
+        return False, f"❌ SDK 调用发生异常: {str(e)}"
+    
+    finally:
+        if os.path.exists(dummy_image_path):
+            try:
+                os.remove(dummy_image_path)
             except:
                 pass

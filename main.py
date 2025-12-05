@@ -9,7 +9,7 @@ from media_processor.visual_manager import VisualManager
 from ai_services.llm_api import run_llm_generation
 
 VIDEO_EXTS = {'.mp4', '.mov', '.mpeg', '.webm'}
-AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.amr', '.mpga'}
+AUDIO_EXTS = {'mp3', 'm4a', 'wav', 'amr', 'mpga'}
 TEXT_EXTS = {'.txt', '.md', '.mdx', '.markdown', '.pdf', '.html', '.xlsx', '.xls', '.doc', '.docx', '.csv', '.eml', '.msg', '.pptx', '.ppt', '.xml', '.epub'}
 
 def main_process_generator(
@@ -22,7 +22,8 @@ def main_process_generator(
     asr_context: str | None = None, 
     additional_instructions: str = "",
     qwen_asr_model: str = "qwen3-asr-flash",
-    enable_visual_analysis: bool = False 
+    enable_visual_analysis: bool = False,
+    vlm_model_name: str = "qwen3-vl-plus"
 ): 
     temp_root = "temp"
     output_dir = os.path.join(temp_root, "output_chunks")
@@ -217,7 +218,8 @@ def main_process_generator(
                     input_path, 
                     interval_seconds=60, 
                     mode="lecture_mixed",
-                    max_workers=4
+                    max_workers=4,
+                    model=vlm_model_name
                 )
                 yield "sub_progress", 1.0, "✅ 视觉分析完成。"
                 

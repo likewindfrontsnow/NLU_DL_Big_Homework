@@ -2,10 +2,10 @@ import streamlit as st
 import os
 import time
 from main import main_process_generator
-from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT
+from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT, SUPPORTED_VLM
 from ai_services.llm_api import refine_llm_generation
 from dotenv import set_key
-from core.model_verifier import verify_llm_model, verify_asr_model
+from core.model_verifier import verify_llm_model, verify_asr_model, verify_vlm_model
 
 VIDEO_EXTS = {'mp4', 'mov', 'mpeg', 'webm'}
 AUDIO_EXTS = {'mp3', 'm4a', 'wav', 'amr', 'mpga'}
@@ -182,7 +182,8 @@ else:
         
         whisper_model_size = "tiny" 
         qwen_asr_model = "qwen-audio-asr-latest"
-        
+        selected_backup = None
+
         if transcription_provider == "Local Whisper":
             whisper_model_size = st.selectbox(
                 "请选择 Whisper 模型:",
@@ -203,13 +204,14 @@ else:
             )
 
             backup_options = ["(无备选)"] + SUPPORTED_ASR_MODELS
-            selected_backup = st.selectbox(
+            selected_backup_str = st.selectbox(
                 "请选择备选模型 (遇到限流时自动切换):",
                 backup_options,
                 index=0,
                 disabled=is_busy
             )
-            LLM_CONFIG["asr_backup_model"] = None if selected_backup == "(无备选)" else selected_backup
+            selected_backup = None if selected_backup_str == "(无备选)" else selected_backup_str
+            LLM_CONFIG["asr_backup_model"] = selected_backup
         
         if transcription_provider == "Qwen API":
             if qwen_asr_model in ASR_MODELS_WITH_CONTEXT_SUPPORT:
@@ -227,44 +229,6 @@ else:
                      st.session_state.asr_context = ""
 
         st.markdown("---")
-
-        if st.button("🔍 检测模型连通性 (Check Availability)", disabled=is_busy, use_container_width=True):
-            
-            current_api_key = os.getenv("DASHSCOPE_API_KEY") or LLM_CONFIG.get("api_key")
-            current_base_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            
-            if not current_api_key:
-                st.error("❌ 未检测到 API Key，请先在上一步输入并保存。")
-            else:
-                with st.status("正在检测服务连通性...", expanded=True) as status:
-                    
-                    st.write(f"正在连接 LLM: **{selected_llm_model}** ...")
-                    llm_ok, llm_msg = verify_llm_model(current_api_key, current_base_url, selected_llm_model)
-                    
-                    if llm_ok:
-                        st.write(f":green[{llm_msg}]")
-                    else:
-                        st.write(f":red[{llm_msg}]")
-
-                    asr_ok = True 
-                    if transcription_provider == "Qwen API":
-                        st.write(f"正在连接 ASR: **{qwen_asr_model}** ...")
-                        asr_ok, asr_msg = verify_asr_model(current_api_key, qwen_asr_model)
-                        if asr_ok:
-                            st.write(f":green[{asr_msg}]")
-                        else:
-                            st.write(f":red[{asr_msg}]")
-                    else:
-                        st.write(f"ASR 服务选定为 **Local Whisper**，跳过云端验证。")
-
-                    if llm_ok and asr_ok:
-                        status.update(label="✅ 所有服务连接正常！", state="complete", expanded=False)
-                        st.toast("✅ 模型连通性检测通过！", icon="🎉")
-                    else:
-                        status.update(label="❌ 检测到服务连接问题", state="error", expanded=True)
-                        st.error("请检查报错信息，确认 API Key 余额或模型名称是否正确。")
-
-        st.markdown("---")
         
         stream_output = st.toggle(
             "启用笔记流式输出", 
@@ -279,6 +243,71 @@ else:
             help="开启后，将对视频进行抽帧分析，提取PPT和板书内容。这会增加处理时间。",
             disabled=is_busy
         )
+        
+        selected_vlm_model = "qwen3-vl-plus"
+        if enable_visual_analysis:
+            selected_vlm_model = st.selectbox(
+                "请选择 VLM 模型:",
+                SUPPORTED_VLM,
+                index=0,
+                disabled=is_busy
+            )
+
+        st.markdown("---")
+
+        if st.button("🔍 全面检测模型连通性", disabled=is_busy, use_container_width=True):
+            current_api_key = os.getenv("DASHSCOPE_API_KEY") or LLM_CONFIG.get("api_key")
+            current_base_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            
+            if not current_api_key:
+                st.error("❌ 未检测到 API Key，请先在上一步输入并保存。")
+            else:
+                with st.status("正在进行全链路服务检测...", expanded=True) as status:
+                    all_passed = True
+                    
+                    st.write(f"1. 正在连接笔记生成 LLM: **{selected_llm_model}** ...")
+                    llm_ok, llm_msg = verify_llm_model(current_api_key, current_base_url, selected_llm_model)
+                    if llm_ok:
+                        st.write(f":green[{llm_msg}]")
+                    else:
+                        st.write(f":red[{llm_msg}]")
+                        all_passed = False
+
+                    if transcription_provider == "Qwen API":
+                        st.write(f"2. 正在连接 ASR 主模型: **{qwen_asr_model}** ...")
+                        asr_ok, asr_msg = verify_asr_model(current_api_key, qwen_asr_model)
+                        if asr_ok:
+                            st.write(f":green[{asr_msg}]")
+                        else:
+                            st.write(f":red[{asr_msg}]")
+                            all_passed = False
+                        
+                        if selected_backup:
+                            st.write(f"3. 正在连接 ASR 备选模型: **{selected_backup}** ...")
+                            bk_ok, bk_msg = verify_asr_model(current_api_key, selected_backup)
+                            if bk_ok:
+                                st.write(f":green[{bk_msg}]")
+                            else:
+                                st.write(f":red[{bk_msg}]")
+                                all_passed = False
+                    else:
+                        st.write("2. ASR 服务选定为 **Local Whisper**，跳过云端验证。")
+
+                    if enable_visual_analysis:
+                        st.write(f"4. 正在连接视觉分析 VLM: **{selected_vlm_model}** ...")
+                        vlm_ok, vlm_msg = verify_vlm_model(current_api_key, selected_vlm_model)
+                        if vlm_ok:
+                            st.write(f":green[{vlm_msg}]")
+                        else:
+                            st.write(f":red[{vlm_msg}]")
+                            all_passed = False
+
+                    if all_passed:
+                        status.update(label="✅ 所有选定服务连接正常！", state="complete", expanded=False)
+                        st.toast("✅ 模型连通性检测通过！", icon="🎉")
+                    else:
+                        status.update(label="❌ 检测到服务连接问题", state="error", expanded=True)
+                        st.error("请检查报错信息，确认 API Key 余额或模型名称是否正确。")
 
         st.markdown("---")
         keep_temp_files = st.checkbox(
@@ -416,7 +445,8 @@ else:
             st.session_state.asr_context,
             final_custom_instructions,
             qwen_asr_model=qwen_asr_model,
-            enable_visual_analysis=enable_visual_analysis
+            enable_visual_analysis=enable_visual_analysis,
+            vlm_model_name=selected_vlm_model
         )
         
         for event_type, value, *rest in generator:

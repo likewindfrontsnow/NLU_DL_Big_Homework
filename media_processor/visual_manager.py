@@ -26,7 +26,8 @@ class VisualManager:
         video_path: str, 
         interval_seconds: int = 45, 
         mode: str = "general",
-        max_workers: int = 4
+        max_workers: int = 4,
+        model: str = "qwen3-vl-plus"
     ) -> str:
         base_dir = os.path.dirname(os.path.abspath(video_path))
         temp_frame_dir = os.path.join(base_dir, "temp_frames_for_analysis")
@@ -45,7 +46,7 @@ class VisualManager:
         def _analyze_task(frame_path):
             timestamp = self._parse_timestamp_from_filename(os.path.basename(frame_path), interval_seconds)
             try:
-                desc = analyze_image(frame_path, mode=mode)
+                desc = analyze_image(frame_path, mode=mode, model=model)
                 return (timestamp, desc)
             except Exception:
                 return (timestamp, "[该帧分析失败]")
@@ -69,7 +70,7 @@ class VisualManager:
 
         results.sort(key=lambda x: time_str_to_seconds(x[0]))
 
-        summary_lines = [f"\n### 📺 视频视觉内容分析报告 (模式: {mode})"]
+        summary_lines = [f"\n### 📺 视频视觉内容分析报告 (模式: {mode} | 模型: {model})"]
         summary_lines.append(f"共分析关键帧: {len(frames)} 张 | 采样间隔: {interval_seconds}秒\n")
         
         for timestamp, desc in results:
