@@ -58,7 +58,6 @@ def _create_dummy_image():
         return None
 
 def verify_llm_model(api_key: str, base_url: str, model_name: str):
-    print(f"🔍 [LLM 验证] 正在检查模型: {model_name} ...")
     
     if not api_key or not base_url:
         return False, "缺少 API Key 或 Base URL 配置"
@@ -102,7 +101,6 @@ def verify_llm_model(api_key: str, base_url: str, model_name: str):
         return False, f"❌ 连接异常: {e}"
 
 def verify_asr_model(api_key: str, model_name: str):
-    print(f"🔍 [ASR 验证] 正在检查模型: {model_name} ...")
     
     if not api_key:
         return False, "缺少 DashScope API Key"
@@ -156,7 +154,6 @@ def verify_asr_model(api_key: str, model_name: str):
                 pass
 
 def verify_vlm_model(api_key: str, model_name: str):
-    print(f"🔍 [VLM 验证] 正在检查模型: {model_name} ...")
 
     if not api_key:
         return False, "缺少 DashScope API Key"
