@@ -1,8 +1,12 @@
 import streamlit as st
 import os
 import time
+import shutil
+import atexit
+import signal
+import sys
 from main import main_process_generator
-from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT, SUPPORTED_VLM
+from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT, SUPPORTED_VLM, save_models_config, load_models_config
 from ai_services.llm_api import refine_llm_generation
 from dotenv import set_key
 from core.model_verifier import verify_llm_model, verify_asr_model, verify_vlm_model
@@ -28,6 +32,28 @@ NOTE_TYPE_MAPPING = {
     "Medical": "医学"
 }
 
+def global_cleanup():
+    temp_dir = "temp"
+    try:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            os.makedirs(temp_dir, exist_ok=True)
+    except Exception:
+        pass
+
+atexit.register(global_cleanup)
+
+def signal_handler(sig, frame):
+    global_cleanup()
+    sys.exit(0)
+
+if sys.platform != 'win32':
+    try:
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+    except:
+        pass
+
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
 
@@ -35,9 +61,8 @@ def cleanup_temp_file(file_path):
     try:
         if os.path.exists(file_path):
             os.remove(file_path)
-            print(f"已清理临时文件: {file_path}")
-    except Exception as e:
-        print(f"清理文件失败: {e}")
+    except Exception:
+        pass
 
 def _save_key(key):
     env_path = ".env"
@@ -57,7 +82,7 @@ if LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup:
     with st.spinner("🔄 正在启动自检：验证 API Key 有效性..."):
         check_key = LLM_CONFIG["api_key"]
         check_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        check_model = LLM_CONFIG.get("model", "qwen-plus")
+        check_model = LLM_CONFIG.get("model", SUPPORTED_LLM[0] if SUPPORTED_LLM else "qwen-plus")
         
         is_valid, msg = verify_llm_model(check_key, check_url, check_model)
         
@@ -90,7 +115,7 @@ if not LLM_CONFIG.get("api_key"):
             st.info("正在连接服务器验证 Key 的有效性...")
             
             verify_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            verify_model = "qwen-plus"
+            verify_model = SUPPORTED_LLM[0] if SUPPORTED_LLM else "qwen-plus"
             
             is_valid, msg = verify_llm_model(new_key, verify_url, verify_model)
 
@@ -109,6 +134,8 @@ if not LLM_CONFIG.get("api_key"):
 else:
     st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
 
+    current_config = load_models_config()
+    
     default_states = {
         "processing_started": False,
         "current_notes": None,
@@ -123,7 +150,10 @@ else:
         "refinement_in_progress": False,
         "refinement_stop_requested": False,
         "preset_feedback": "(请选择一个快捷指令)",
-        "custom_feedback": ""
+        "custom_feedback": "",
+        "config_llm": "\n".join(current_config["llm_models"]),
+        "config_vlm": "\n".join(current_config["vlm_models"]),
+        "config_asr": "\n".join(current_config["asr_models"]),
     }
 
     for key, value in default_states.items():
@@ -138,7 +168,12 @@ else:
     with st.sidebar:
         st.header("⚙️ 参数配置")
 
-        current_llm_model = LLM_CONFIG.get("model", "qwen-plus")
+        current_llm_model = LLM_CONFIG.get("model")
+        if current_llm_model not in SUPPORTED_LLM and SUPPORTED_LLM:
+             current_llm_model = SUPPORTED_LLM[0]
+        elif not current_llm_model and SUPPORTED_LLM:
+             current_llm_model = SUPPORTED_LLM[0]
+        
         try:
             llm_index = SUPPORTED_LLM.index(current_llm_model)
         except ValueError:
@@ -152,6 +187,8 @@ else:
             help="选择用于生成笔记的大语言模型。"
         )
         LLM_CONFIG["model"] = selected_llm_model
+        set_key(".env", "LLM_MODEL", selected_llm_model)
+
 
         st.session_state.output_filename = st.text_input(
             "请输入希望的笔记文件名 (无需后缀)", 
@@ -195,15 +232,23 @@ else:
             if st.session_state.asr_context != "":
                 st.session_state.asr_context = "" 
         else:
+            qwen_asr_model_options = SUPPORTED_ASR_MODELS
+            if not qwen_asr_model_options:
+                 qwen_asr_model_options = ["qwen3-asr-flash"]
+
+            qwen_asr_model_index = 0
+            if "qwen3-asr-flash" in qwen_asr_model_options:
+                qwen_asr_model_index = qwen_asr_model_options.index("qwen3-asr-flash")
+
             qwen_asr_model = st.selectbox(
                 "请选择 Qwen ASR 模型:",
-                SUPPORTED_ASR_MODELS,
-                index=0,
+                qwen_asr_model_options,
+                index=qwen_asr_model_index,
                 disabled=is_busy,
                 help="选择用于语音转录的模型。"
             )
-
-            backup_options = ["(无备选)"] + SUPPORTED_ASR_MODELS
+            
+            backup_options = ["(无备选)"] + qwen_asr_model_options
             selected_backup_str = st.selectbox(
                 "请选择备选模型 (遇到限流时自动切换):",
                 backup_options,
@@ -244,14 +289,18 @@ else:
             disabled=is_busy
         )
         
-        selected_vlm_model = "qwen3-vl-plus"
+        selected_vlm_model = SUPPORTED_VLM[0] if SUPPORTED_VLM else "qwen3-vl-plus"
         keep_visual_files = False
         insert_images = False
 
         if enable_visual_analysis:
+            selected_vlm_model_options = SUPPORTED_VLM
+            if not selected_vlm_model_options:
+                 selected_vlm_model_options = ["qwen3-vl-plus"]
+
             selected_vlm_model = st.selectbox(
                 "请选择 VLM 模型:",
-                SUPPORTED_VLM,
+                selected_vlm_model_options,
                 index=0,
                 disabled=is_busy
             )
@@ -355,6 +404,33 @@ else:
             final_custom_instructions += "、".join(selected_instructions) + "。\n"
         if custom_instruction_text:
             final_custom_instructions += custom_instruction_text
+        
+        st.markdown("---")
+
+        with st.expander("🛠️ 模型管理 (高级)", expanded=False):
+            st.markdown("在这里编辑可用的模型列表。每行一个模型名称。")
+
+            st.session_state.config_llm = st.text_area("笔记生成模型 (LLM)", value=st.session_state.config_llm, key="llm_config_area", height=150, disabled=is_busy)
+            st.session_state.config_vlm = st.text_area("视觉分析模型 (VLM)", value=st.session_state.config_vlm, key="vlm_config_area", height=150, disabled=is_busy)
+            st.session_state.config_asr = st.text_area("语音转录模型 (ASR)", value=st.session_state.config_asr, key="asr_config_area", height=150, disabled=is_busy)
+
+            if st.button("💾 保存并应用模型配置", use_container_width=True, disabled=is_busy):
+                new_llm = [m.strip() for m in st.session_state.config_llm.split('\n') if m.strip()]
+                new_vlm = [m.strip() for m in st.session_state.config_vlm.split('\n') if m.strip()]
+                new_asr = [m.strip() for m in st.session_state.config_asr.split('\n') if m.strip()]
+
+                if not new_llm or not new_vlm or not new_asr:
+                     st.error("错误：模型列表不能为空。请确保至少有一个模型。")
+                else:
+                    new_config = {
+                        "llm_models": new_llm,
+                        "vlm_models": new_vlm,
+                        "asr_models": new_asr,
+                    }
+                    save_models_config(new_config)
+                    st.success("✅ 模型配置已保存并应用！正在重新加载...")
+                    time.sleep(1)
+                    st.rerun()
 
         st.info("请在上方配置好参数后，上传文件开始处理。")
 
@@ -403,7 +479,8 @@ else:
 
 
     stop_button_placeholder = st.empty()
-
+    temp_file_path = None
+    
     if st.session_state.processing_started and st.session_state.current_notes is None and not st.session_state.processing_has_failed:
         
         stop_button_placeholder.button("⏹️ 停止生成", on_click=handle_stop, use_container_width=True)
@@ -466,87 +543,81 @@ else:
             insert_images=insert_images
         )
         
-        for event_type, value, *rest in generator:
-            
-            if st.session_state.get("stop_requested", False):
-                st.session_state.stop_requested = False
-                st.session_state.processing_started = False
-                st.warning("处理已由用户手动停止。")
-                main_progress_text.warning("处理已停止。")
-                stop_button_placeholder.empty()
-                st.rerun()
-                break
-
-            text = rest[0] if rest else ""
-
-            if event_type == "progress":
-                main_progress_bar.progress(float(value))
-                main_progress_text.info(text)
-            elif event_type == "sub_progress":
-                sub_progress_bar.progress(float(value))
-                sub_progress_text.text(text)
-            
-            elif event_type == "transcript":
-                st.session_state.full_transcript = value
-
-            elif event_type == "llm_chunk":
-                full_llm_response += value
-                llm_output_container.markdown(full_llm_response) 
-            
-            elif event_type == "persistent_error":
-                st.error(f"处理失败: {text}")
-                main_progress_text.error("一个关键步骤在多次重试后仍然失败，已停止处理。")
-                llm_output_container.error(f"**错误详情:**\n\n{text}")
+        try:
+            for event_type, value, *rest in generator:
                 
-                if "401" in text or "密钥无效" in text or "Unauthorized" in text:
-                    st.session_state.api_key_invalid = True
-                cleanup_temp_file(temp_file_path)
+                if st.session_state.get("stop_requested", False):
+                    st.session_state.processing_started = False
+                    stop_button_placeholder.empty()
+                    st.warning("处理已由用户手动停止。")
+                    main_progress_text.warning("处理已停止。")
+                    generator.close()
+                    break
 
-                st.session_state.processing_has_failed = True 
-                st.session_state.processing_started = False
-                stop_button_placeholder.empty()
-                st.rerun() 
-                break
-            
-            elif event_type == "error":
-                st.error(text)
-                cleanup_temp_file(temp_file_path)
-                llm_output_container.error(text)
-                st.session_state.processing_has_failed = True 
-                st.session_state.processing_started = False
-                stop_button_placeholder.empty()
-                st.rerun() 
-                break
+                text = rest[0] if rest else ""
 
-            elif event_type == "done":
-                main_progress_bar.progress(1.0)
-                sub_progress_bar.empty()
-                sub_progress_text.empty()
+                if event_type == "progress":
+                    main_progress_bar.progress(float(value))
+                    main_progress_text.info(text)
+                elif event_type == "sub_progress":
+                    sub_progress_bar.progress(float(value))
+                    sub_progress_text.text(text)
                 
-                st.success(text)
-                final_result_path = value
+                elif event_type == "transcript":
+                    st.session_state.full_transcript = value
+
+                elif event_type == "llm_chunk":
+                    full_llm_response += value
+                    llm_output_container.markdown(full_llm_response) 
                 
-                st.session_state.current_notes = full_llm_response
-                st.session_state.processing_started = False
-                stop_button_placeholder.empty()
-                
-                if not keep_temp_files:
-                    transcript_path = os.path.join("temp", "source_transcript.txt")
-                    try:
-                        if os.path.exists(transcript_path):
-                            os.remove(transcript_path)
-                    except OSError as e:
-                        st.warning(f"无法自动删除文字稿文件 '{transcript_path}': {e}")
-                else:
-                    st.info("已根据您的设置，保留了语音转文字稿。")
-                
-                try:
-                    if os.path.exists(temp_file_path):
-                        os.remove(temp_file_path)
-                except OSError as e:
-                    st.warning(f"无法自动删除临时上传文件 '{temp_file_path}': {e}")
-                cleanup_temp_file(temp_file_path)
-                st.rerun() 
+                elif event_type == "persistent_error" or event_type == "error":
+                    st.error(f"处理失败: {text}")
+                    main_progress_text.error("一个关键步骤在多次重试后仍然失败，已停止处理。")
+                    llm_output_container.error(f"**错误详情:**\n\n{text}")
+                    
+                    if "401" in text or "密钥无效" in text or "Unauthorized" in text:
+                        st.session_state.api_key_invalid = True
+                    cleanup_temp_file(temp_file_path)
+
+                    st.session_state.processing_has_failed = True 
+                    st.session_state.processing_started = False
+                    stop_button_placeholder.empty()
+                    st.rerun() 
+                    break
+
+                elif event_type == "done":
+                    main_progress_bar.progress(1.0)
+                    sub_progress_bar.empty()
+                    sub_progress_text.empty()
+                    
+                    st.success(text)
+                    
+                    st.session_state.current_notes = full_llm_response
+                    st.session_state.processing_started = False
+                    stop_button_placeholder.empty()
+                    
+                    if not keep_temp_files:
+                        transcript_path = os.path.join("temp", "source_transcript.txt")
+                        try:
+                            if os.path.exists(transcript_path):
+                                os.remove(transcript_path)
+                        except OSError as e:
+                            st.warning(f"无法自动删除文字稿文件 '{transcript_path}': {e}")
+                    else:
+                        st.info("已根据您的设置，保留了语音转文字稿。")
+                    
+                    cleanup_temp_file(temp_file_path)
+                    st.rerun() 
+        finally:
+            if st.session_state.processing_started:
+                 st.session_state.processing_started = False
+                 stop_button_placeholder.empty()
+                 st.rerun()
+            elif st.session_state.get("stop_requested", False):
+                 st.session_state.stop_requested = False
+                 st.session_state.processing_started = False
+                 stop_button_placeholder.empty()
+                 st.rerun()
 
 
     if st.session_state.current_notes:
