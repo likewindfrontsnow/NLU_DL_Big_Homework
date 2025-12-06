@@ -1,7 +1,6 @@
 import os
 import requests
 import dashscope
-from dashscope.audio.asr import Transcription
 import tempfile
 import wave
 import struct
@@ -112,36 +111,22 @@ def verify_asr_model(api_key: str, model_name: str):
     abs_audio_path = os.path.abspath(dummy_audio_path)
     dashscope.api_key = api_key
     
-    is_async_model = "filetrans" in model_name or "fun-asr" in model_name
-
     try:
-        if is_async_model:
-            response = Transcription.async_call(
-                model=model_name,
-                file_urls=[f"file://{abs_audio_path}"],
-            )
-            
-            if response.status_code == HTTPStatus.OK:
-                return True, "✅ 验证通过：模型可用 (异步提交成功)。"
-            else:
-                return False, f"❌ 调用失败: {response.message} ({response.code})"
-                
-        else:
-            messages = [
-                {
-                    "role": "user",
-                    "content": [{"audio": f"file://{abs_audio_path}"}]
-                }
-            ]
-            response = dashscope.MultiModalConversation.call(
-                model=model_name,
-                messages=messages,
-            )
+        messages = [
+            {
+                "role": "user",
+                "content": [{"audio": f"file://{abs_audio_path}"}]
+            }
+        ]
+        response = dashscope.MultiModalConversation.call(
+            model=model_name,
+            messages=messages,
+        )
 
-            if response.status_code == HTTPStatus.OK:
-                return True, "✅ 验证通过：模型可用。"
-            else:
-                return False, f"❌ 调用失败: {response.message} ({response.code})"
+        if response.status_code == HTTPStatus.OK:
+            return True, "✅ 验证通过：模型可用。"
+        else:
+            return False, f"❌ 调用失败: {response.message} ({response.code})"
 
     except Exception as e:
         return False, f"❌ SDK 调用发生异常: {str(e)}"

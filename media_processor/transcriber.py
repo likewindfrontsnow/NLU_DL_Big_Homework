@@ -4,7 +4,6 @@ import time
 import requests
 import whisper
 import dashscope
-from dashscope.audio.asr import Transcription
 from core.config import LLM_CONFIG
 from core.utils import retry
 from http import HTTPStatus
@@ -74,44 +73,8 @@ def _transcribe_sync_qwen(api_key, model_name, audio_path, context_text, start_o
         return ""
     raise Exception(f"Qwen API Error: {response.code} - {response.message}")
 
-def _transcribe_async_filetrans(api_key, model_name, audio_path, context_text, start_offset_seconds):
-    task_response = Transcription.async_call(
-        api_key=api_key,
-        model=model_name,
-        file_urls=[f"file://{os.path.abspath(audio_path)}"],
-        enable_itn=True
-    )
-    
-    transcription_response = Transcription.wait(task=task_response, api_key=api_key)
-    
-    if transcription_response.status_code == 200:
-        results = transcription_response.output.get("results", [])
-        if results and results[0].get("subtask_status") == "SUCCEEDED":
-            trans_url = results[0].get("transcription_url")
-            if trans_url:
-                data = requests.get(trans_url).json()
-                if "transcripts" in data:
-                    full_text = ""
-                    for t in data["transcripts"]:
-                        sentences = t.get("sentences", [])
-                        if sentences:
-                            for sent in sentences:
-                                abs_seconds = (sent.get("begin_time", 0) / 1000.0) + start_offset_seconds
-                                full_text += f"[{_seconds_to_timestamp(abs_seconds)}] {sent.get('text', '')}\n"
-                        else:
-                             full_text += f"[{_seconds_to_timestamp(start_offset_seconds)}] {t.get('text', '')}\n"
-                    return full_text
-                if "text" in data:
-                     return f"[{_seconds_to_timestamp(start_offset_seconds)}] {data['text']}\n"
-            if "text" in results[0]:
-                return f"[{_seconds_to_timestamp(start_offset_seconds)}] {results[0]['text']}\n"
-        raise Exception(f"Subtask failed: {results[0].get('message', 'Unknown error')}")
-    raise Exception(f"Task Failed: {transcription_response.message}")
-
 @retry(max_retries=3, delay=5, allowed_exceptions=(Exception,))
 def _execute_transcription(api_key, model_name, audio_path, context, offset):
-    if "filetrans" in model_name or "fun-asr" in model_name:
-        return _transcribe_async_filetrans(api_key, model_name, audio_path, context, offset)
     return _transcribe_sync_qwen(api_key, model_name, audio_path, context, offset)
 
 @retry(max_retries=5, delay=2, backoff_factor=2, allowed_exceptions=(Exception,))

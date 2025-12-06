@@ -44,14 +44,12 @@ SUPPORTED_TTS_MODELS=[
 
 SUPPORTED_ASR_MODELS = [
     "qwen3-omni-30b-a3b-captioner",
-    "qwen3-asr-flash-filetrans",
     "qwen3-asr-flash",   
     "qwen-audio-turbo-latest",
     "qwen-audio-asr-latest",    
 ]
 
 ASR_MODELS_WITH_CONTEXT_SUPPORT=[
-    "qwen3-asr-flash-filetrans",
     "qwen3-asr-flash",   
 ]
 
