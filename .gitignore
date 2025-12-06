@@ -1,14 +1,24 @@
-# Python 缓存文件和虚拟环境
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
 venv/
 .venv/
+llm_video_to_note/
 
-# IDE 和操作系统产生的临时文件
+.env
+
+temp/
+logs/
+output/
+
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
 
+*.mp4
+*.mp3
+*.wav
+*.mov
