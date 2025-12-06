@@ -6,7 +6,7 @@ import atexit
 import signal
 import sys
 from main import main_process_generator
-from core.config import LLM_CONFIG, SUPPORTED_LLM, SUPPORTED_ASR_MODELS, ASR_MODELS_WITH_CONTEXT_SUPPORT, SUPPORTED_VLM, save_models_config, load_models_config
+from core.config import LLM_CONFIG, save_models_config, load_models_config, ASR_MODELS_WITH_CONTEXT_SUPPORT
 from ai_services.llm_api import refine_llm_generation
 from dotenv import set_key
 from core.model_verifier import verify_llm_model, verify_asr_model, verify_vlm_model
@@ -229,6 +229,7 @@ else:
         whisper_model_size = "tiny" 
         qwen_asr_model = "qwen-audio-asr-latest"
         selected_backup = None
+        asr_workers = 10
 
         if transcription_provider == "Local Whisper":
             whisper_model_size = st.selectbox(
@@ -266,6 +267,15 @@ else:
             )
             selected_backup = None if selected_backup_str == "(无备选)" else selected_backup_str
             LLM_CONFIG["asr_backup_model"] = selected_backup
+
+            asr_workers = st.slider(
+                "ASR 并发线程数",
+                min_value=1,
+                max_value=20,
+                value=10,
+                help="增加线程数可加快转录速度，但可能触发 API 限流。",
+                disabled=is_busy
+            )
         
         if transcription_provider == "Qwen API":
             if qwen_asr_model in ASR_MODELS_WITH_CONTEXT_SUPPORT:
@@ -628,7 +638,8 @@ else:
             vlm_backup_model=selected_vlm_backup,
             keep_visual_files=keep_visual_files,
             insert_images=insert_images,
-            vlm_concurrency=vlm_workers
+            vlm_concurrency=vlm_workers,
+            asr_concurrency=asr_workers
         )
         
         try:

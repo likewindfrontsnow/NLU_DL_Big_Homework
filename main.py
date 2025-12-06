@@ -28,7 +28,8 @@ def main_process_generator(
     vlm_backup_model: str = None,
     keep_visual_files: bool = False,
     insert_images: bool = False,
-    vlm_concurrency: int = 10
+    vlm_concurrency: int = 10,
+    asr_concurrency: int = 10
 ): 
     run_logs = []
     task_completed = False
@@ -47,7 +48,7 @@ def main_process_generator(
             return None
 
     log(f"任务开始: {input_path}")
-    log(f"参数: ASR={transcription_provider}, LLM={LLM_CONFIG.get('model')}, Note={note_type}")
+    log(f"参数: ASR={transcription_provider} (Workers: {asr_concurrency}), LLM={LLM_CONFIG.get('model')}, Note={note_type}")
     log(f"视觉: {enable_visual_analysis} (Model: {vlm_model_name}, Backup: {vlm_backup_model}, Workers: {vlm_concurrency})")
 
     temp_root = "temp"
@@ -220,7 +221,7 @@ def main_process_generator(
             num_transcribed = 0
 
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=asr_concurrency) as executor:
                     if transcription_provider == "Local Whisper":
                         future_to_index = {
                             executor.submit(transcribe_single_audio_chunk, chunk, whisper_model_size): i
@@ -289,9 +290,13 @@ def main_process_generator(
                     )
                     
                     for vm_event, vm_val1, *vm_args in vm_gen:
-                        if vm_event == "progress":
-                            total_f = vm_args[0] if vm_args else 100
-                            yield "sub_progress", vm_val1 / total_f, f"正在分析关键帧 ({vm_val1}/{total_f})..."
+                        if vm_event == "stage_progress":
+                            stage, curr, total = vm_val1, vm_args[0], vm_args[1]
+                            progress_val = curr / total if total > 0 else 0
+                            if stage == "extracting":
+                                yield "sub_progress", progress_val, f"正在并发抽帧 ({curr}/{total})..."
+                            elif stage == "analyzing":
+                                yield "sub_progress", progress_val, f"正在分析关键帧 ({curr}/{total})..."
                         elif vm_event == "log":
                              log(f"[VisualManager] {vm_val1}")
                              yield "sub_progress", 0.0, vm_val1

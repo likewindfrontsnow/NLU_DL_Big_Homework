@@ -52,23 +52,34 @@ class VisualManager:
         base_dir = os.path.dirname(os.path.abspath(video_path))
         temp_frame_dir = os.path.join("temp", "vlm_frames_output")
         
-        frames = self.extractor.extract_smart_frames(
+        extraction_gen = self.extractor.extract_frames_generator(
             video_path, 
             interval_seconds=interval_seconds, 
             output_dir=temp_frame_dir
         )
         
+        frames = []
+        
+        for event, data in extraction_gen:
+            if event == 'progress':
+                # data is (current, total)
+                yield "stage_progress", "extracting", data[0], data[1]
+            elif event == 'result':
+                frames = data
+            elif event == 'error':
+                yield "log", 0, f"抽帧错误: {data}"
+                
         if not frames:
             yield "result", "【视觉分析报告】\n(未提取到有效画面)", None
             return
 
         yield "log", 0, "正在进行图像去重，剔除静止画面..."
+        
         unique_frames = []
         if frames:
             unique_frames.append(frames[0])
             last_kept_frame = frames[0]
             dropped_count = 0
-            
             SIMILARITY_THRESHOLD = 12.0 
             
             for i in range(1, len(frames)):
@@ -86,7 +97,7 @@ class VisualManager:
             frames = unique_frames
 
         total_frames = len(frames)
-        yield "progress", 0, total_frames
+        yield "stage_progress", "analyzing", 0, total_frames
 
         results: List[Tuple[str, str, str]] = []
         
@@ -98,7 +109,6 @@ class VisualManager:
                 models_to_try.append(backup_model)
             
             last_error = None
-            
             for m in models_to_try:
                 try:
                     desc = analyze_image(frame_path, mode=mode, model=m)
@@ -106,11 +116,9 @@ class VisualManager:
                 except Exception as e:
                     last_error = e
                     continue
-            
             return (timestamp, f"[该帧分析失败: {str(last_error)}]", frame_path)
 
         completed_count = 0
-        
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_frame = {executor.submit(_analyze_task, fp): fp for fp in frames}
             
@@ -122,7 +130,7 @@ class VisualManager:
                 except Exception:
                     pass
                 
-                yield "progress", completed_count, total_frames
+                yield "stage_progress", "analyzing", completed_count, total_frames
 
         def time_str_to_seconds(t_str):
             try:
@@ -135,7 +143,7 @@ class VisualManager:
         results.sort(key=lambda x: time_str_to_seconds(x[0]))
 
         summary_lines = [f"\n### 📺 视频视觉内容分析报告 (模式: {mode} | 主模型: {model})"]
-        summary_lines.append(f"共分析关键帧: {len(frames)} 张 (原采样: {len(frames)+dropped_count if 'dropped_count' in locals() else len(frames)}) | 采样间隔: {interval_seconds}秒\n")
+        summary_lines.append(f"共分析关键帧: {len(frames)} 张 | 采样间隔: {interval_seconds}秒\n")
         
         if insert_images and image_output_dir:
             try:
@@ -145,20 +153,17 @@ class VisualManager:
 
         for timestamp, desc, frame_src in results:
             item_text = f"**[{timestamp}]**\n{desc}\n"
-            
             if insert_images and image_output_dir and os.path.exists(frame_src):
                 try:
                     file_name = os.path.basename(frame_src)
                     safe_name = f"{timestamp.replace(':', '')}_{file_name}"
                     dst_path = os.path.join(image_output_dir, safe_name)
                     shutil.copy(frame_src, dst_path)
-                    
                     rel_dir_name = os.path.basename(image_output_dir)
                     rel_path = f"{rel_dir_name}/{safe_name}"
                     item_text += f"\n![关键帧截图]({rel_path})\n"
-                except Exception as e:
-                    print(f"复制图片失败: {e}")
-
+                except Exception:
+                    pass
             summary_lines.append(item_text)
             
         final_report = "\n".join(summary_lines)
@@ -169,7 +174,5 @@ class VisualManager:
                     shutil.rmtree(temp_frame_dir)
             except Exception:
                 pass
-        else:
-            print(f"  > [VLM] 截图已保留至: {temp_frame_dir}")
 
         yield "result", final_report, None
