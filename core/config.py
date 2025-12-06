@@ -16,7 +16,7 @@ DEFAULT_MODELS = {
         "qwen-plus-2025-07-28",
         "qwen-flash-2025-07-28",
         "deepseek-v3.2-exp",
-        "qwen-flash",
+        "qwen-flash"
     ],
     "vlm_models": [
         "qwen3-vl-plus",
@@ -32,8 +32,14 @@ DEFAULT_MODELS = {
     "asr_models": [
         "qwen3-omni-30b-a3b-captioner",
         "qwen3-asr-flash",
+        "qwen3-asr-flash-2025-09-08",
         "qwen-audio-turbo-latest",
         "qwen-audio-asr-latest",
+        "qwen-audio-turbo",
+        "qwen-audio-turbo-1204",
+        "qwen-audio-turbo-0807",
+        "qwen-audio-asr",
+        "qwen-audio-asr-1204"
     ]
 }
 
@@ -80,6 +86,8 @@ SUPPORTED_TTS_MODELS = [
 
 ASR_MODELS_WITH_CONTEXT_SUPPORT = [
     "qwen3-asr-flash",
+    "qwen3-asr-flash-2025-09-08",
+
 ]
 
 LLM_CONFIG = {
