@@ -75,6 +75,19 @@ def _save_key(key):
         LLM_CONFIG["provider_name"] = "DashCope(Qwen)"
         set_key(env_path, "LLM_PROVIDER_NAME", "DashCope(Qwen)")
 
+def init_model_config_state():
+    if "llm_models" not in st.session_state:
+        config = load_models_config()
+        st.session_state.llm_models = config.get("llm_models", [])
+        st.session_state.vlm_models = config.get("vlm_models", [])
+        st.session_state.asr_models = config.get("asr_models", [])
+        
+        LLM_CONFIG["supported_llm"] = st.session_state.llm_models
+        LLM_CONFIG["supported_vlm"] = st.session_state.vlm_models
+        LLM_CONFIG["supported_asr_models"] = st.session_state.asr_models
+
+init_model_config_state()
+
 if "has_validated_on_startup" not in st.session_state:
     st.session_state.has_validated_on_startup = False
 
@@ -82,7 +95,7 @@ if LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup:
     with st.spinner("🔄 正在启动自检：验证 API Key 有效性..."):
         check_key = LLM_CONFIG["api_key"]
         check_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        check_model = LLM_CONFIG.get("model", SUPPORTED_LLM[0] if SUPPORTED_LLM else "qwen-plus")
+        check_model = LLM_CONFIG.get("model", st.session_state.llm_models[0] if st.session_state.llm_models else "qwen-plus")
         
         is_valid, msg = verify_llm_model(check_key, check_url, check_model)
         
@@ -115,7 +128,7 @@ if not LLM_CONFIG.get("api_key"):
             st.info("正在连接服务器验证 Key 的有效性...")
             
             verify_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            verify_model = SUPPORTED_LLM[0] if SUPPORTED_LLM else "qwen-plus"
+            verify_model = st.session_state.llm_models[0] if st.session_state.llm_models else "qwen-plus"
             
             is_valid, msg = verify_llm_model(new_key, verify_url, verify_model)
 
@@ -134,8 +147,6 @@ if not LLM_CONFIG.get("api_key"):
 else:
     st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
 
-    current_config = load_models_config()
-    
     default_states = {
         "processing_started": False,
         "current_notes": None,
@@ -151,9 +162,6 @@ else:
         "refinement_stop_requested": False,
         "preset_feedback": "(请选择一个快捷指令)",
         "custom_feedback": "",
-        "config_llm": "\n".join(current_config["llm_models"]),
-        "config_vlm": "\n".join(current_config["vlm_models"]),
-        "config_asr": "\n".join(current_config["asr_models"]),
     }
 
     for key, value in default_states.items():
@@ -169,19 +177,21 @@ else:
         st.header("⚙️ 参数配置")
 
         current_llm_model = LLM_CONFIG.get("model")
-        if current_llm_model not in SUPPORTED_LLM and SUPPORTED_LLM:
-             current_llm_model = SUPPORTED_LLM[0]
-        elif not current_llm_model and SUPPORTED_LLM:
-             current_llm_model = SUPPORTED_LLM[0]
+        available_llm = st.session_state.llm_models
+        
+        if current_llm_model not in available_llm and available_llm:
+             current_llm_model = available_llm[0]
+        elif not current_llm_model and available_llm:
+             current_llm_model = available_llm[0]
         
         try:
-            llm_index = SUPPORTED_LLM.index(current_llm_model)
+            llm_index = available_llm.index(current_llm_model) if current_llm_model in available_llm else 0
         except ValueError:
             llm_index = 0
             
         selected_llm_model = st.selectbox(
             "请选择笔记生成模型 (LLM):",
-            SUPPORTED_LLM,
+            available_llm,
             index=llm_index,
             disabled=is_busy,
             help="选择用于生成笔记的大语言模型。"
@@ -232,7 +242,7 @@ else:
             if st.session_state.asr_context != "":
                 st.session_state.asr_context = "" 
         else:
-            qwen_asr_model_options = SUPPORTED_ASR_MODELS
+            qwen_asr_model_options = st.session_state.asr_models
             if not qwen_asr_model_options:
                  qwen_asr_model_options = ["qwen3-asr-flash"]
 
@@ -289,12 +299,12 @@ else:
             disabled=is_busy
         )
         
-        selected_vlm_model = SUPPORTED_VLM[0] if SUPPORTED_VLM else "qwen3-vl-plus"
+        selected_vlm_model = "qwen3-vl-plus"
         keep_visual_files = False
         insert_images = False
 
         if enable_visual_analysis:
-            selected_vlm_model_options = SUPPORTED_VLM
+            selected_vlm_model_options = st.session_state.vlm_models
             if not selected_vlm_model_options:
                  selected_vlm_model_options = ["qwen3-vl-plus"]
 
@@ -407,30 +417,76 @@ else:
         
         st.markdown("---")
 
-        with st.expander("🛠️ 模型管理 (高级)", expanded=False):
-            st.markdown("在这里编辑可用的模型列表。每行一个模型名称。")
+        with st.expander("🛠️ 模型管理 (列表配置)", expanded=False):
+            st.info("在此添加或删除支持的模型。修改将即时生效。")
+            
+            tab_llm, tab_vlm, tab_asr = st.tabs(["LLM (笔记)", "VLM (视觉)", "ASR (语音)"])
+            
+            def render_model_manager(tab_obj, model_list_key, label):
+                with tab_obj:
+                    current_list = st.session_state[model_list_key]
+                    st.write(f"**当前可用 {label} 模型列表:**")
+                    
+                    st.markdown(
+                        f"""
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px;">
+                            {''.join([f'<span style="background-color: #f0f2f6; padding: 4px 8px; border-radius: 4px; border: 1px solid #e0e0e0;">{m}</span>' for m in current_list])}
+                        </div>
+                        """, 
+                        unsafe_allow_html=True
+                    )
 
-            st.session_state.config_llm = st.text_area("笔记生成模型 (LLM)", value=st.session_state.config_llm, key="llm_config_area", height=150, disabled=is_busy)
-            st.session_state.config_vlm = st.text_area("视觉分析模型 (VLM)", value=st.session_state.config_vlm, key="vlm_config_area", height=150, disabled=is_busy)
-            st.session_state.config_asr = st.text_area("语音转录模型 (ASR)", value=st.session_state.config_asr, key="asr_config_area", height=150, disabled=is_busy)
+                    col_add, col_del = st.columns(2)
+                    
+                    with col_add:
+                        st.markdown("##### ➕ 添加模型")
+                        new_model_name = st.text_input(f"输入新模型名称 ({label})", key=f"new_{model_list_key}")
+                        if st.button(f"添加至 {label} 列表", key=f"btn_add_{model_list_key}", disabled=is_busy):
+                            if new_model_name and new_model_name.strip():
+                                clean_name = new_model_name.strip()
+                                if clean_name not in st.session_state[model_list_key]:
+                                    st.session_state[model_list_key].append(clean_name)
+                                    new_config = {
+                                        "llm_models": st.session_state.llm_models,
+                                        "vlm_models": st.session_state.vlm_models,
+                                        "asr_models": st.session_state.asr_models
+                                    }
+                                    save_models_config(new_config)
+                                    st.success(f"已添加 {clean_name}")
+                                    time.sleep(0.5)
+                                    st.rerun()
+                                else:
+                                    st.warning("该模型已存在。")
+                            else:
+                                st.warning("请输入模型名称。")
 
-            if st.button("💾 保存并应用模型配置", use_container_width=True, disabled=is_busy):
-                new_llm = [m.strip() for m in st.session_state.config_llm.split('\n') if m.strip()]
-                new_vlm = [m.strip() for m in st.session_state.config_vlm.split('\n') if m.strip()]
-                new_asr = [m.strip() for m in st.session_state.config_asr.split('\n') if m.strip()]
+                    with col_del:
+                        st.markdown("##### 🗑️ 删除模型")
+                        models_to_delete = st.multiselect(
+                            f"选择要删除的模型 ({label})", 
+                            st.session_state[model_list_key],
+                            key=f"del_select_{model_list_key}"
+                        )
+                        if st.button(f"确认删除 ({len(models_to_delete)})", key=f"btn_del_{model_list_key}", disabled=is_busy):
+                            if models_to_delete:
+                                for m in models_to_delete:
+                                    if m in st.session_state[model_list_key]:
+                                        st.session_state[model_list_key].remove(m)
+                                new_config = {
+                                    "llm_models": st.session_state.llm_models,
+                                    "vlm_models": st.session_state.vlm_models,
+                                    "asr_models": st.session_state.asr_models
+                                }
+                                save_models_config(new_config)
+                                st.success("已删除选中模型")
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.warning("请先选择要删除的模型。")
 
-                if not new_llm or not new_vlm or not new_asr:
-                     st.error("错误：模型列表不能为空。请确保至少有一个模型。")
-                else:
-                    new_config = {
-                        "llm_models": new_llm,
-                        "vlm_models": new_vlm,
-                        "asr_models": new_asr,
-                    }
-                    save_models_config(new_config)
-                    st.success("✅ 模型配置已保存并应用！正在重新加载...")
-                    time.sleep(1)
-                    st.rerun()
+            render_model_manager(tab_llm, "llm_models", "LLM")
+            render_model_manager(tab_vlm, "vlm_models", "VLM")
+            render_model_manager(tab_asr, "asr_models", "ASR")
 
         st.info("请在上方配置好参数后，上传文件开始处理。")
 

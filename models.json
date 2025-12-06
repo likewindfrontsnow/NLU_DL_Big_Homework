@@ -1,0 +1,32 @@
+{
+    "llm_models": [
+        "qwen3-max",
+        "qwen-plus-2025-07-28",
+        "qwen-flash-2025-07-28",
+        "deepseek-v3.2-exp",
+        "qwen-flash"
+    ],
+    "vlm_models": [
+        "qwen3-vl-plus",
+        "qwen3-vl-flash",
+        "qwen3-vl-30b-a3b-thinking",
+        "qwen-vl-max",
+        "qwen-vl-plus",
+        "qvq-max",
+        "qvq-plus",
+        "qvq-72b-preview",
+        "qwen-vl-ocr-latest"
+    ],
+    "asr_models": [
+        "qwen3-omni-30b-a3b-captioner",
+        "qwen3-asr-flash",
+        "qwen3-asr-flash-2025-09-08",
+        "qwen-audio-turbo-latest",
+        "qwen-audio-asr-latest",
+        "qwen-audio-turbo",
+        "qwen-audio-turbo-1204",
+        "qwen-audio-turbo-0807",
+        "qwen-audio-asr",
+        "qwen-audio-asr-1204"
+    ]
+}
