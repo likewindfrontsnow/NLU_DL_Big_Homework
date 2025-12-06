@@ -25,8 +25,10 @@ def main_process_generator(
     qwen_asr_model: str = "qwen3-asr-flash",
     enable_visual_analysis: bool = False,
     vlm_model_name: str = "qwen3-vl-plus",
+    vlm_backup_model: str = None,
     keep_visual_files: bool = False,
-    insert_images: bool = False
+    insert_images: bool = False,
+    vlm_concurrency: int = 10
 ): 
     run_logs = []
     task_completed = False
@@ -46,7 +48,7 @@ def main_process_generator(
 
     log(f"任务开始: {input_path}")
     log(f"参数: ASR={transcription_provider}, LLM={LLM_CONFIG.get('model')}, Note={note_type}")
-    log(f"视觉: {enable_visual_analysis} (Model: {vlm_model_name}, Keep: {keep_visual_files}, Insert: {insert_images})")
+    log(f"视觉: {enable_visual_analysis} (Model: {vlm_model_name}, Backup: {vlm_backup_model}, Workers: {vlm_concurrency})")
 
     temp_root = "temp"
     output_dir = os.path.join(temp_root, "output_chunks")
@@ -267,21 +269,35 @@ def main_process_generator(
                 log("开始视觉分析...")
                 
                 try:
-                    yield "sub_progress", 0.0, f"模式: lecture_mixed | 正在抽帧并调用 VLM..."
+                    yield "sub_progress", 0.0, f"正在预处理与抽帧..."
                     
                     image_assets_dir = os.path.join(final_output_dir, "assets")
 
                     vm = VisualManager()
-                    visual_report = vm.process_video_for_visual_summary(
+                    
+                    visual_report = ""
+                    vm_gen = vm.process_video_generator(
                         input_path, 
                         interval_seconds=60, 
                         mode="lecture_mixed",
-                        max_workers=4,
+                        max_workers=vlm_concurrency,
                         model=vlm_model_name,
+                        backup_model=vlm_backup_model,
                         keep_intermediate_files=keep_visual_files,
                         insert_images=insert_images,
                         image_output_dir=image_assets_dir
                     )
+                    
+                    for vm_event, vm_val1, *vm_args in vm_gen:
+                        if vm_event == "progress":
+                            total_f = vm_args[0] if vm_args else 100
+                            yield "sub_progress", vm_val1 / total_f, f"正在分析关键帧 ({vm_val1}/{total_f})..."
+                        elif vm_event == "log":
+                             log(f"[VisualManager] {vm_val1}")
+                             yield "sub_progress", 0.0, vm_val1
+                        elif vm_event == "result":
+                             visual_report = vm_val1
+                    
                     yield "sub_progress", 1.0, "✅ 视觉分析完成。"
                     
                     instruction_text = "请将以下视觉信息与音频内容结合，生成完整的笔记。"

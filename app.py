@@ -199,7 +199,6 @@ else:
         LLM_CONFIG["model"] = selected_llm_model
         set_key(".env", "LLM_MODEL", selected_llm_model)
 
-
         st.session_state.output_filename = st.text_input(
             "请输入希望的笔记文件名 (无需后缀)", 
             value=st.session_state.output_filename,
@@ -300,6 +299,8 @@ else:
         )
         
         selected_vlm_model = "qwen3-vl-plus"
+        selected_vlm_backup = None
+        vlm_workers = 10
         keep_visual_files = False
         insert_images = False
 
@@ -314,6 +315,26 @@ else:
                 index=0,
                 disabled=is_busy
             )
+
+            vlm_backup_options = ["(无备选)"] + selected_vlm_model_options
+            selected_vlm_backup_str = st.selectbox(
+                "请选择 VLM 备选模型:",
+                vlm_backup_options,
+                index=0,
+                disabled=is_busy
+            )
+            selected_vlm_backup = None if selected_vlm_backup_str == "(无备选)" else selected_vlm_backup_str
+            LLM_CONFIG["vlm_backup_model"] = selected_vlm_backup
+
+            vlm_workers = st.slider(
+                "VLM 并发线程数",
+                min_value=1,
+                max_value=20,
+                value=10,
+                help="并发数越高速度越快，但容易触发 API 限流。",
+                disabled=is_busy
+            )
+
             keep_visual_files = st.checkbox(
                 "保留视觉分析中间文件 (截图 & 报告)",
                 value=False,
@@ -375,6 +396,15 @@ else:
                         else:
                             st.write(f":red[{vlm_msg}]")
                             all_passed = False
+                        
+                        if selected_vlm_backup:
+                            st.write(f"5. 正在连接 VLM 备选模型: **{selected_vlm_backup}** ...")
+                            vb_ok, vb_msg = verify_vlm_model(current_api_key, selected_vlm_backup)
+                            if vb_ok:
+                                st.write(f":green[{vb_msg}]")
+                            else:
+                                st.write(f":red[{vb_msg}]")
+                                all_passed = False
 
                     if all_passed:
                         status.update(label="✅ 所有选定服务连接正常！", state="complete", expanded=False)
@@ -595,8 +625,10 @@ else:
             qwen_asr_model=qwen_asr_model,
             enable_visual_analysis=enable_visual_analysis,
             vlm_model_name=selected_vlm_model,
+            vlm_backup_model=selected_vlm_backup,
             keep_visual_files=keep_visual_files,
-            insert_images=insert_images
+            insert_images=insert_images,
+            vlm_concurrency=vlm_workers
         )
         
         try:

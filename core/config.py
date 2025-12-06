@@ -93,4 +93,5 @@ LLM_CONFIG = {
     "supported_tts_models": SUPPORTED_TTS_MODELS,
     "supported_asr_models": SUPPORTED_ASR_MODELS,
     "asr_backup_model": "qwen-audio-asr-latest",
+    "vlm_backup_model": "qwen-vl-plus",
 }

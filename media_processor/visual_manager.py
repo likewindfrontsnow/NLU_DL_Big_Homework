@@ -5,6 +5,7 @@ import shutil
 from typing import List, Tuple
 from .frame_extractor import FrameExtractor
 from ai_services.vlm_api import analyze_image
+from PIL import Image
 
 class VisualManager:
     def __init__(self):
@@ -15,23 +16,39 @@ class VisualManager:
             match = re.search(r'frame_(\d+)', filename)
             if match:
                 index = int(match.group(1))
-                total_seconds = index * interval
+                total_seconds = (index - 1) * interval
+                if total_seconds < 0: total_seconds = 0
                 return f"{total_seconds // 60:02d}:{total_seconds % 60:02d}"
         except Exception:
             pass
         return "未知时间"
 
-    def process_video_for_visual_summary(
+    def _calculate_image_difference(self, img_path1: str, img_path2: str) -> float:
+        try:
+            img1 = Image.open(img_path1).convert('L').resize((64, 64))
+            img2 = Image.open(img_path2).convert('L').resize((64, 64))
+            
+            p1 = list(img1.getdata())
+            p2 = list(img2.getdata())
+            
+            diff_sum = sum(abs(a - b) for a, b in zip(p1, p2))
+            mean_diff = diff_sum / len(p1)
+            return mean_diff
+        except Exception:
+            return 999.0
+
+    def process_video_generator(
         self, 
         video_path: str, 
-        interval_seconds: int = 45, 
+        interval_seconds: int = 60, 
         mode: str = "general",
-        max_workers: int = 4,
+        max_workers: int = 10,
         model: str = "qwen3-vl-plus",
+        backup_model: str = None,
         keep_intermediate_files: bool = False,
         insert_images: bool = False,
         image_output_dir: str = None
-    ) -> str:
+    ):
         base_dir = os.path.dirname(os.path.abspath(video_path))
         temp_frame_dir = os.path.join("temp", "vlm_frames_output")
         
@@ -42,26 +59,70 @@ class VisualManager:
         )
         
         if not frames:
-            return "【视觉分析报告】\n(未提取到有效画面)"
+            yield "result", "【视觉分析报告】\n(未提取到有效画面)", None
+            return
+
+        yield "log", 0, "正在进行图像去重，剔除静止画面..."
+        unique_frames = []
+        if frames:
+            unique_frames.append(frames[0])
+            last_kept_frame = frames[0]
+            dropped_count = 0
+            
+            SIMILARITY_THRESHOLD = 12.0 
+            
+            for i in range(1, len(frames)):
+                current_frame = frames[i]
+                diff = self._calculate_image_difference(last_kept_frame, current_frame)
+                
+                if diff > SIMILARITY_THRESHOLD:
+                    unique_frames.append(current_frame)
+                    last_kept_frame = current_frame
+                else:
+                    dropped_count += 1
+            
+            if dropped_count > 0:
+                yield "log", 0, f"✅ 去重完成：原 {len(frames)} 帧 -> 现 {len(unique_frames)} 帧 (过滤了 {dropped_count} 张重复画面)"
+            frames = unique_frames
+
+        total_frames = len(frames)
+        yield "progress", 0, total_frames
 
         results: List[Tuple[str, str, str]] = []
         
         def _analyze_task(frame_path):
             timestamp = self._parse_timestamp_from_filename(os.path.basename(frame_path), interval_seconds)
-            try:
-                desc = analyze_image(frame_path, mode=mode, model=model)
-                return (timestamp, desc, frame_path)
-            except Exception:
-                return (timestamp, "[该帧分析失败]", frame_path)
+            
+            models_to_try = [model]
+            if backup_model and backup_model != model and backup_model != "(无备选)":
+                models_to_try.append(backup_model)
+            
+            last_error = None
+            
+            for m in models_to_try:
+                try:
+                    desc = analyze_image(frame_path, mode=mode, model=m)
+                    return (timestamp, desc, frame_path)
+                except Exception as e:
+                    last_error = e
+                    continue
+            
+            return (timestamp, f"[该帧分析失败: {str(last_error)}]", frame_path)
 
+        completed_count = 0
+        
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_frame = {executor.submit(_analyze_task, fp): fp for fp in frames}
             
             for future in concurrent.futures.as_completed(future_to_frame):
+                completed_count += 1
                 try:
-                    results.append(future.result())
+                    res = future.result()
+                    results.append(res)
                 except Exception:
                     pass
+                
+                yield "progress", completed_count, total_frames
 
         def time_str_to_seconds(t_str):
             try:
@@ -73,8 +134,8 @@ class VisualManager:
 
         results.sort(key=lambda x: time_str_to_seconds(x[0]))
 
-        summary_lines = [f"\n### 📺 视频视觉内容分析报告 (模式: {mode} | 模型: {model})"]
-        summary_lines.append(f"共分析关键帧: {len(frames)} 张 | 采样间隔: {interval_seconds}秒\n")
+        summary_lines = [f"\n### 📺 视频视觉内容分析报告 (模式: {mode} | 主模型: {model})"]
+        summary_lines.append(f"共分析关键帧: {len(frames)} 张 (原采样: {len(frames)+dropped_count if 'dropped_count' in locals() else len(frames)}) | 采样间隔: {interval_seconds}秒\n")
         
         if insert_images and image_output_dir:
             try:
@@ -87,18 +148,13 @@ class VisualManager:
             
             if insert_images and image_output_dir and os.path.exists(frame_src):
                 try:
-                    # 复制图片到最终的 assets 目录
                     file_name = os.path.basename(frame_src)
-                    # 为了防止重名覆盖，加上时间戳前缀
                     safe_name = f"{timestamp.replace(':', '')}_{file_name}"
                     dst_path = os.path.join(image_output_dir, safe_name)
                     shutil.copy(frame_src, dst_path)
                     
-                    # 生成 Markdown 图片链接 (使用相对路径)
-                    # 假设 assets 目录名是 output_dir 的子目录名
                     rel_dir_name = os.path.basename(image_output_dir)
                     rel_path = f"{rel_dir_name}/{safe_name}"
-                    
                     item_text += f"\n![关键帧截图]({rel_path})\n"
                 except Exception as e:
                     print(f"复制图片失败: {e}")
@@ -107,8 +163,6 @@ class VisualManager:
             
         final_report = "\n".join(summary_lines)
 
-        # 仅在未开启"保留中间文件"且未开启"插入图片"（避免删除了刚复制的源）时清理
-        # 其实只要 copy 完了，temp 里的就可以删了
         if not keep_intermediate_files:
             try:
                 if os.path.exists(temp_frame_dir):
@@ -118,4 +172,4 @@ class VisualManager:
         else:
             print(f"  > [VLM] 截图已保留至: {temp_frame_dir}")
 
-        return final_report
+        yield "result", final_report, None
