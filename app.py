@@ -5,6 +5,8 @@ import shutil
 import atexit
 import signal
 import sys
+import zipfile
+import io
 from main import main_process_generator
 from core.config import LLM_CONFIG, save_models_config, load_models_config, ASR_MODELS_WITH_CONTEXT_SUPPORT
 from ai_services.llm_api import refine_llm_generation
@@ -726,15 +728,49 @@ else:
         
         note_display_area = st.empty()
         note_display_area.markdown(st.session_state.current_notes)
-            
-        st.download_button(
-            label=f"下载当前笔记 ({st.session_state.output_filename}.md)",
-            data=st.session_state.current_notes,
-            file_name=f"{st.session_state.output_filename}.md",
-            mime="text/markdown",
-            use_container_width=True,
-            disabled=is_busy
-        )
+        
+        assets_dir = os.path.join("output", "assets")
+        has_assets = os.path.exists(assets_dir) and len(os.listdir(assets_dir)) > 0
+        
+        if has_assets:
+            try:
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    zf.writestr(f"{st.session_state.output_filename}.md", st.session_state.current_notes)
+                    
+                    for file_name in os.listdir(assets_dir):
+                        full_path = os.path.join(assets_dir, file_name)
+                        if os.path.isfile(full_path):
+                            zf.write(full_path, f"assets/{file_name}")
+                
+                st.download_button(
+                    label=f"📦 下载笔记压缩包 (含图片) .zip",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"{st.session_state.output_filename}.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                    disabled=is_busy,
+                    help="推荐下载！包含 Markdown 笔记和所有引用的图片，解压后图片可正常显示。"
+                )
+            except Exception as e:
+                st.error(f"生成压缩包失败: {e}")
+                st.download_button(
+                    label=f"下载当前笔记 ({st.session_state.output_filename}.md)",
+                    data=st.session_state.current_notes,
+                    file_name=f"{st.session_state.output_filename}.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                    disabled=is_busy
+                )
+        else:
+            st.download_button(
+                label=f"下载当前笔记 ({st.session_state.output_filename}.md)",
+                data=st.session_state.current_notes,
+                file_name=f"{st.session_state.output_filename}.md",
+                mime="text/markdown",
+                use_container_width=True,
+                disabled=is_busy
+            )
         
         st.markdown("---")
         st.subheader("✍️ 笔记精炼")
