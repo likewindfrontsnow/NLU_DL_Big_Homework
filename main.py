@@ -8,6 +8,7 @@ from media_processor.splitter import split_media_to_audio_chunks_generator
 from media_processor.transcriber import transcribe_single_audio_chunk, pre_download_whisper_model, transcribe_with_qwen
 from media_processor.visual_manager import VisualManager
 from ai_services.llm_api import run_llm_generation
+from core.doc_parser import parse_reference_files
 
 VIDEO_EXTS = {'.mp4', '.mov', '.mpeg', '.webm'}
 AUDIO_EXTS = {'mp3', 'm4a', 'wav', 'amr', 'mpga'}
@@ -29,7 +30,8 @@ def main_process_generator(
     keep_visual_files: bool = False,
     insert_images: bool = False,
     vlm_concurrency: int = 10,
-    asr_concurrency: int = 10
+    asr_concurrency: int = 10,
+    reference_files: list = None
 ): 
     run_logs = []
     task_completed = False
@@ -50,6 +52,8 @@ def main_process_generator(
     log(f"任务开始: {input_path}")
     log(f"参数: ASR={transcription_provider} (Workers: {asr_concurrency}), LLM={LLM_CONFIG.get('model')}, Note={note_type}")
     log(f"视觉: {enable_visual_analysis} (Model: {vlm_model_name}, Backup: {vlm_backup_model}, Workers: {vlm_concurrency})")
+    if reference_files:
+        log(f"参考资料数量: {len(reference_files)}")
 
     temp_root = "temp"
     output_dir = os.path.join(temp_root, "output_chunks")
@@ -77,8 +81,14 @@ def main_process_generator(
     file_ext = os.path.splitext(input_path)[1].lower()
     current_progress = 0
     full_transcript = ""
+    reference_content = ""
 
     try:
+        if reference_files:
+            yield "progress_text", "正在解析参考资料..."
+            reference_content = parse_reference_files(reference_files)
+            log(f"参考资料解析完成，长度: {len(reference_content)}")
+
         def run_llm_and_yield_results():
             nonlocal task_completed
             final_text = "" 
@@ -89,7 +99,13 @@ def main_process_generator(
                 yield "progress_text", f"正在提交给 {provider_name} (模型: {model_name}, 模式: {stream_status}, 类型: {note_type})..."
                 log(f"开始调用 LLM: {model_name}")
                 
-                llm_call_result = run_llm_generation(full_transcript, stream_output, note_type, additional_instructions)
+                llm_call_result = run_llm_generation(
+                    full_transcript, 
+                    stream_output, 
+                    note_type, 
+                    additional_instructions,
+                    reference_material=reference_content
+                )
                 
                 if stream_output:
                     for chunk in llm_call_result:

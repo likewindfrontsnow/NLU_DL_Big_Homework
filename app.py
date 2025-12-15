@@ -434,6 +434,16 @@ else:
         )
 
         st.markdown("---")
+        with st.expander("📚 上传参考资料 (可选)", expanded=False):
+            st.markdown("上传书籍、PPT或讲义，辅助生成更准确的笔记。")
+            reference_files = st.file_uploader(
+                "选择参考文件 (支持 PDF, PPTX, DOCX, TXT, MD)",
+                type=['pdf', 'pptx', 'docx', 'txt', 'md'],
+                accept_multiple_files=True,
+                disabled=is_busy
+            )
+
+        st.markdown("---")
         with st.expander("🎨 个性化定制 (生成前)", expanded=False):
             st.markdown("在这里添加对笔记生成的特殊要求。")
             
@@ -641,7 +651,8 @@ else:
             keep_visual_files=keep_visual_files,
             insert_images=insert_images,
             vlm_concurrency=vlm_workers,
-            asr_concurrency=asr_workers
+            asr_concurrency=asr_workers,
+            reference_files=reference_files
         )
         
         try:
@@ -912,4 +923,4 @@ else:
             st.session_state.refinement_stop_requested = False
             st.session_state.preset_feedback = "(请选择一个快捷指令)"
             st.session_state.custom_feedback = ""
-            st.rerun()
+            st.rerun() 

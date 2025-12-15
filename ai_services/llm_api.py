@@ -57,7 +57,7 @@ def _call_llm_api(messages: list, stream_output: bool) -> Union[Generator[str, N
         error_msg = result.get('error') or result.get('error_msg') or "API 响应异常，未包含有效内容"
         raise Exception(f"API 错误: {error_msg}")
 
-def run_llm_generation(input_text: str, stream_output: bool, note_type: str, additional_instructions: str = "") -> Union[Generator[str, None, None], str]:
+def run_llm_generation(input_text: str, stream_output: bool, note_type: str, additional_instructions: str = "", reference_material: str = "") -> Union[Generator[str, None, None], str]:
     if note_type == "STEM":
         prompt_template = PROMPT_NOTES_STEM
     elif note_type == "Medical":
@@ -68,7 +68,9 @@ def run_llm_generation(input_text: str, stream_output: bool, note_type: str, add
     if additional_instructions:
         prompt_template += f"\n\n# 用户额外特别指令 (User Custom Instructions)\n请在生成笔记时，严格遵守以下用户提出的额外要求：\n{additional_instructions}"
     
-    final_prompt = prompt_template.format(source_transcript=input_text)
+    ref_content = reference_material if reference_material.strip() else "(无参考资料)"
+
+    final_prompt = prompt_template.format(source_transcript=input_text, reference_material=ref_content)
     
     messages = [
         {"role": "system", "content": final_prompt} 

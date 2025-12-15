@@ -3,3 +3,6 @@ requests
 python-dotenv
 dashscope
 openai-whisper
+python-pptx
+pypdf
+python-docx
