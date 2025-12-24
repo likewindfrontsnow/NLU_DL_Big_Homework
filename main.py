@@ -11,7 +11,7 @@ from ai_services.llm_api import run_llm_generation
 from core.doc_parser import parse_reference_files
 
 VIDEO_EXTS = {'.mp4', '.mov', '.mpeg', '.webm'}
-AUDIO_EXTS = {'mp3', 'm4a', 'wav', 'amr', 'mpga'}
+AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.amr', '.mpga'}
 TEXT_EXTS = {'.txt', '.md', '.mdx', '.markdown', '.pdf', '.html', '.xlsx', '.xls', '.doc', '.docx', '.csv', '.eml', '.msg', '.pptx', '.ppt', '.xml', '.epub'}
 
 def main_process_generator(
