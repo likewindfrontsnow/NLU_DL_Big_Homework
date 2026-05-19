@@ -62,20 +62,30 @@ def run_llm_generation(input_text: str, stream_output: bool, note_type: str, add
         prompt_template = PROMPT_NOTES_STEM
     elif note_type == "Medical":
         prompt_template = PROMPT_NOTES_MEDICAL
-    else: 
+    elif note_type == "None":
+        prompt_template = None
+    else:
         prompt_template = PROMPT_NOTES_HASS
 
-    if additional_instructions:
-        prompt_template += f"\n\n# 用户额外特别指令 (User Custom Instructions)\n请在生成笔记时，严格遵守以下用户提出的额外要求：\n{additional_instructions}"
-    
     ref_content = reference_material if reference_material.strip() else "(无参考资料)"
 
-    final_prompt = prompt_template.format(source_transcript=input_text, reference_material=ref_content)
-    
-    messages = [
-        {"role": "system", "content": final_prompt} 
-    ]
-    
+    if prompt_template is None:
+        user_content = f"请根据以下内容生成笔记：\n\n{input_text}"
+        if reference_material.strip():
+            user_content += f"\n\n参考资料：\n{ref_content}"
+        if additional_instructions:
+            user_content += f"\n\n额外要求：\n{additional_instructions}"
+        messages = [{"role": "user", "content": user_content}]
+    else:
+        if additional_instructions:
+            prompt_template += f"\n\n# 用户额外特别指令 (User Custom Instructions)\n请在生成笔记时，严格遵守以下用户提出的额外要求：\n{additional_instructions}"
+
+        final_prompt = prompt_template.format(source_transcript=input_text, reference_material=ref_content)
+
+        messages = [
+            {"role": "system", "content": final_prompt}
+        ]
+
     return _call_llm_api(messages, stream_output)
 
 def refine_llm_generation(original_transcript: str, current_notes: str, user_feedback: str, stream_output: bool) -> Union[Generator[str, None, None], str]:

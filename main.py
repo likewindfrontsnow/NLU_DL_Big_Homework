@@ -15,13 +15,13 @@ AUDIO_EXTS = {'.mp3', '.m4a', '.wav', '.amr', '.mpga'}
 TEXT_EXTS = {'.txt', '.md', '.mdx', '.markdown', '.pdf', '.html', '.xlsx', '.xls', '.doc', '.docx', '.csv', '.eml', '.msg', '.pptx', '.ppt', '.xml', '.epub'}
 
 def main_process_generator(
-    input_path: str,  
-    output_filename: str, 
-    whisper_model_size: str, 
-    stream_output: bool, 
-    transcription_provider: str, 
-    note_type: str, 
-    asr_context: str | None = None, 
+    input_path: str,
+    output_filename: str,
+    whisper_model_size: str,
+    stream_output: bool,
+    transcription_provider: str,
+    note_type: str,
+    asr_context: str | None = None,
     additional_instructions: str = "",
     qwen_asr_model: str = "qwen3-asr-flash",
     enable_visual_analysis: bool = False,
@@ -31,7 +31,8 @@ def main_process_generator(
     insert_images: bool = False,
     vlm_concurrency: int = 10,
     asr_concurrency: int = 10,
-    reference_files: list = None
+    reference_files: list = None,
+    transcript_only: bool = False
 ): 
     run_logs = []
     task_completed = False
@@ -142,8 +143,8 @@ def main_process_generator(
                 return
             
         if file_ext in TEXT_EXTS:
-            total_steps = 2
-            yield "progress", 0 / total_steps, "步骤 1/2: 正在读取文本文档..."
+            total_steps = 1 if transcript_only else 2
+            yield "progress", 0 / total_steps, "步骤 1/1: 正在读取文本文档..." if transcript_only else "步骤 1/2: 正在读取文本文档..."
             try:
                 with open(input_path, 'r', encoding='utf-8') as f:
                     full_transcript = f.read()
@@ -153,8 +154,28 @@ def main_process_generator(
                 yield "persistent_error", 0, f"**读取文件失败**\n\n`{e}`"
                 save_run_log("failed")
                 return
-            
-            yield "transcript", full_transcript 
+
+            yield "transcript", full_transcript
+
+            if transcript_only:
+                transcript_output_path = os.path.join(final_output_dir, f"{output_filename}.txt")
+                try:
+                    with open(transcript_output_path, 'w', encoding='utf-8') as f:
+                        f.write(full_transcript)
+                    log(f"转录稿已保存: {transcript_output_path}")
+                except IOError as e:
+                    log(f"转录稿保存失败: {e}")
+                    yield "persistent_error", 0, f"**保存转录稿失败**\n\n`{e}`"
+                    save_run_log("failed")
+                    return
+                current_progress += 1
+                log("流程完成（仅转录）")
+                task_completed = True
+                save_run_log("success")
+                yield "progress", current_progress / total_steps, "处理完成！"
+                yield "done", transcript_output_path, "✅ 语音转文字稿已生成！"
+                return
+
             current_progress += 1
             yield "progress", current_progress / total_steps, f"步骤 2/2: 正在提交给 {LLM_CONFIG.get('provider_name', 'LLM')}..."
             
@@ -181,8 +202,13 @@ def main_process_generator(
 
         elif file_ext in VIDEO_EXTS or file_ext in AUDIO_EXTS:
             is_video = file_ext in VIDEO_EXTS
-            do_visual_analysis = is_video and enable_visual_analysis
-            total_steps = 4 if do_visual_analysis else 3
+            do_visual_analysis = is_video and enable_visual_analysis and not transcript_only
+            if transcript_only:
+                total_steps = 2
+            elif do_visual_analysis:
+                total_steps = 4
+            else:
+                total_steps = 3
             
             step_name = "视频" if is_video else "音频"
             yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在切分{step_name}为音频块..."
@@ -357,7 +383,26 @@ def main_process_generator(
             except IOError:
                 pass
 
-            yield "transcript", full_transcript 
+            yield "transcript", full_transcript
+
+            if transcript_only:
+                transcript_output_path = os.path.join(final_output_dir, f"{output_filename}.txt")
+                try:
+                    with open(transcript_output_path, 'w', encoding='utf-8') as f:
+                        f.write(full_transcript)
+                    log(f"转录稿已保存: {transcript_output_path}")
+                except IOError as e:
+                    log(f"转录稿保存失败: {e}")
+                    yield "persistent_error", 0, f"**保存转录稿失败**\n\n`{e}`"
+                    save_run_log("failed")
+                    return
+                current_progress += 1
+                log("流程完成（仅转录）")
+                task_completed = True
+                save_run_log("success")
+                yield "progress", current_progress / total_steps, "处理完成！"
+                yield "done", transcript_output_path, "✅ 语音转文字稿已生成！"
+                return
 
             yield "progress", current_progress / total_steps, f"步骤 {current_progress + 1}/{total_steps}: 正在提交给 {LLM_CONFIG.get('provider_name', 'LLM')}..."
 
@@ -372,7 +417,7 @@ def main_process_generator(
                     yield "progress", current_progress / total_steps, value
                 elif event_type == "save_path":
                     final_path = value
-            
+
             if final_path:
                 current_progress += 1
                 log("流程完成")

@@ -31,7 +31,8 @@ INSTRUCTION_OPTIONS = [
 NOTE_TYPE_MAPPING = {
     "STEM": "理工科",
     "HASS": "人文社科",
-    "Medical": "医学"
+    "Medical": "医学",
+    "None": "无"
 }
 
 def global_cleanup():
@@ -98,51 +99,95 @@ if LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup:
         check_key = LLM_CONFIG["api_key"]
         check_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
         check_model = LLM_CONFIG.get("model", st.session_state.llm_models[0] if st.session_state.llm_models else "qwen-plus")
-        
+
         is_valid, msg = verify_llm_model(check_key, check_url, check_model)
-        
+
         if is_valid:
             st.session_state.has_validated_on_startup = True
         else:
-            st.error(f"⚠️ 启动检测警告：当前保存的 API Key 无效或过期。\n\n**原因**: {msg}")
-            st.warning("请在下方重新输入有效的 API Key。")
-            LLM_CONFIG["api_key"] = ""
+            st.warning(f"⚠️ 启动自检：使用模型 **{check_model}** 验证未通过。\n\n**原因**: {msg}")
+            st.info("您的 API Key 可能仍然有效，只是所选模型无可用额度。请在下方选择其他模型重新验证，或重新输入 Key。")
+            # 不再自动清空 Key，让用户有机会换模型重试
 
-if not LLM_CONFIG.get("api_key"):
-    if not st.session_state.get("has_validated_on_startup", False):
+if not LLM_CONFIG.get("api_key") or not st.session_state.get("has_validated_on_startup", True):
+    existing_key = LLM_CONFIG.get("api_key", "")
+    if not st.session_state.get("has_validated_on_startup", True) and not existing_key:
          st.markdown("### 👋 欢迎使用")
-    
-    st.markdown("""
-    请输入您的 DashScope (Qwen) API Key 以开始使用。
-    
-    - Key 将被安全地保存到本地 `.env` 文件中。
-    - 您可以前往 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/apiKey) 获取您的 Key。
-    """)
-    
+
+    if existing_key:
+        st.info("已检测到本地保存的 API Key。请选择要用于验证的模型，然后点击验证。")
+    else:
+        st.markdown("""
+        请输入您的 DashScope (Qwen) API Key 以开始使用。
+
+        - Key 将被安全地保存到本地 `.env` 文件中。
+        - 您可以前往 [阿里云 DashScope 控制台](https://dashscope.console.aliyun.com/apiKey) 获取您的 Key。
+        """)
+
     new_key = st.text_input(
-        "请输入您的 Qwen API Key (sk-xxxxxxxx)", 
-        type="password", 
+        "请输入您的 Qwen API Key (sk-xxxxxxxx)",
+        type="password",
+        value=existing_key if existing_key else "",
         key="api_key_input_main"
     )
-    
+
+    last_verify_model = os.getenv("LAST_VERIFY_MODEL", "")
+    available_verify_models = st.session_state.llm_models if st.session_state.llm_models else ["qwen-plus"]
+    default_verify_index = 0
+    if last_verify_model and last_verify_model in available_verify_models:
+        default_verify_index = available_verify_models.index(last_verify_model)
+    verify_model = st.selectbox(
+        "请选择用于验证 API Key 的模型:",
+        available_verify_models,
+        index=default_verify_index,
+        key="verify_model_select",
+        help="选择一个您有可用额度的模型来进行验证。验证通过后不影响后续使用其他模型。"
+    )
+
+    with st.expander("➕ 手动添加新模型到列表", expanded=False):
+        new_model_input = st.text_input(
+            "输入新模型名称",
+            key="new_model_verify_page",
+            placeholder="例如: qwen-flash-2025-07-28"
+        )
+        if st.button("添加模型", key="btn_add_model_verify_page"):
+            clean = new_model_input.strip()
+            if clean:
+                if clean not in st.session_state.llm_models:
+                    st.session_state.llm_models.append(clean)
+                    LLM_CONFIG["supported_llm"] = st.session_state.llm_models
+                    save_models_config({
+                        "llm_models": st.session_state.llm_models,
+                        "vlm_models": st.session_state.vlm_models,
+                        "asr_models": st.session_state.asr_models,
+                    })
+                    st.success(f"已添加模型 **{clean}**，请在上方下拉框中重新选择。")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.warning("该模型已存在于列表中。")
+            else:
+                st.warning("请输入模型名称。")
+
     if st.button("验证并保存", use_container_width=True, type="primary"):
-        if new_key and new_key.startswith("sk-"):
-            st.info("正在连接服务器验证 Key 的有效性...")
-            
+        key_to_check = new_key if new_key else existing_key
+        if key_to_check and key_to_check.startswith("sk-"):
+            st.info(f"正在使用模型 **{verify_model}** 验证 Key 的有效性...")
+
             verify_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            verify_model = st.session_state.llm_models[0] if st.session_state.llm_models else "qwen-plus"
-            
-            is_valid, msg = verify_llm_model(new_key, verify_url, verify_model)
+
+            is_valid, msg = verify_llm_model(key_to_check, verify_url, verify_model)
 
             if is_valid:
-                _save_key(new_key)
+                _save_key(key_to_check)
+                set_key(".env", "LAST_VERIFY_MODEL", verify_model)
                 st.session_state.has_validated_on_startup = True
                 st.success("✅ API Key 验证通过并已保存！")
                 time.sleep(1)
                 st.rerun()
             else:
                 st.error(f"❌ 验证失败：{msg}")
-                st.markdown("👉 **请检查您的 Key 是否正确，或网络是否通畅。**")
+                st.markdown("👉 **请尝试选择其他模型重试，或检查 Key 是否正确、网络是否通畅。**")
         else:
             st.error("Key 格式不正确。它应该以 `sk-` 开头。")
 
@@ -164,6 +209,7 @@ else:
         "refinement_stop_requested": False,
         "preset_feedback": "(请选择一个快捷指令)",
         "custom_feedback": "",
+        "transcript_only": False,
     }
 
     for key, value in default_states.items():
@@ -173,7 +219,10 @@ else:
     is_busy = st.session_state.processing_started or st.session_state.refinement_in_progress
 
     provider_name = LLM_CONFIG.get('provider_name', 'LLM')
-    st.info(f"💡 **提示**: 视频/音频文件将使用所选转录服务，笔记生成将调用 **{provider_name}** API。")
+    if st.session_state.get("transcript_only", False):
+        st.info(f"💡 **提示**: 当前为 **仅转录模式**，处理后仅输出语音转文字稿，不生成笔记。")
+    else:
+        st.info(f"💡 **提示**: 视频/音频文件将使用所选转录服务，笔记生成将调用 **{provider_name}** API。")
 
     with st.sidebar:
         st.header("⚙️ 参数配置")
@@ -202,19 +251,27 @@ else:
         set_key(".env", "LLM_MODEL", selected_llm_model)
 
         st.session_state.output_filename = st.text_input(
-            "请输入希望的笔记文件名 (无需后缀)", 
+            "请输入希望的笔记文件名 (无需后缀)",
             value=st.session_state.output_filename,
             disabled=is_busy
         )
 
+        transcript_only = st.toggle(
+            "仅生成语音转文字稿",
+            value=False,
+            key="transcript_only",
+            disabled=is_busy,
+            help="开启后仅进行语音转录，跳过笔记生成步骤，最终输出 .txt 转录稿。"
+        )
+
         note_type_option = st.radio(
             "请选择笔记类型:",
-            ("STEM", "HASS","Medical"),
-            index=0, 
-            key="note_type", 
+            ("STEM", "HASS", "Medical", "None"),
+            index=0,
+            key="note_type",
             horizontal=True,
             format_func=lambda x: NOTE_TYPE_MAPPING.get(x, x),
-            disabled=is_busy
+            disabled=is_busy or transcript_only
         )
 
         st.markdown("---")
@@ -297,17 +354,17 @@ else:
         st.markdown("---")
         
         stream_output = st.toggle(
-            "启用笔记流式输出", 
-            value=True, 
+            "启用笔记流式输出",
+            value=True,
             help="启用后，笔记内容将实时逐字显示。",
-            disabled=is_busy
+            disabled=is_busy or transcript_only
         )
 
         enable_visual_analysis = st.toggle(
             "启用视频视觉分析 (VLM)",
             value=False,
             help="开启后，将对视频进行抽帧分析，提取PPT和板书内容。这会增加处理时间。",
-            disabled=is_busy
+            disabled=is_busy or transcript_only
         )
         
         selected_vlm_model = "qwen3-vl-plus"
@@ -440,25 +497,25 @@ else:
                 "选择参考文件 (支持 PDF, PPTX, DOCX, TXT, MD)",
                 type=['pdf', 'pptx', 'docx', 'txt', 'md'],
                 accept_multiple_files=True,
-                disabled=is_busy
+                disabled=is_busy or transcript_only
             )
 
         st.markdown("---")
         with st.expander("🎨 个性化定制 (生成前)", expanded=False):
             st.markdown("在这里添加对笔记生成的特殊要求。")
-            
+
             selected_instructions = st.multiselect(
                 "快捷指令 (多选):",
                 INSTRUCTION_OPTIONS,
                 key="selected_instructions_ui",
-                disabled=is_busy
+                disabled=is_busy or transcript_only
             )
-            
+
             custom_instruction_text = st.text_area(
                 "自定义额外要求:",
                 placeholder="例如：请重点关注药理学部分，特别是副作用...",
                 key="custom_instruction_text_ui",
-                disabled=is_busy
+                disabled=is_busy or transcript_only
             )
 
         final_custom_instructions = ""
@@ -603,17 +660,24 @@ else:
 
         st.markdown("---")
 
-        stream_status = "流式" if stream_output else "非流式"
-        st.subheader(f"正在生成笔记 ({provider_name} / {selected_llm_model} {stream_status})...")
-        
+        transcript_only = st.session_state.get("transcript_only", False)
+        if transcript_only:
+            st.subheader("正在生成语音转文字稿...")
+        else:
+            stream_status = "流式" if stream_output else "非流式"
+            st.subheader(f"正在生成笔记 ({provider_name} / {selected_llm_model} {stream_status})...")
+
         if transcription_provider == "Local Whisper":
             asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
         else:
             asr_config_text = f"转录服务: **Qwen API** (模型: **{qwen_asr_model}**)"
             if st.session_state.asr_context:
                 asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
-        
-        st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}**")
+
+        if transcript_only:
+            st.info(f"{asr_config_text} | **仅转录模式**")
+        else:
+            st.info(f"{asr_config_text} | 笔记类型: **{st.session_state.note_type}**")
         
         llm_output_container = st.empty()
         full_llm_response = ""
@@ -636,12 +700,12 @@ else:
              st.rerun() 
 
         generator = main_process_generator(
-            temp_file_path, 
-            st.session_state.output_filename, 
+            temp_file_path,
+            st.session_state.output_filename,
             whisper_model_size,
             stream_output,
             transcription_provider,
-            st.session_state.note_type, 
+            st.session_state.note_type,
             st.session_state.asr_context,
             final_custom_instructions,
             qwen_asr_model=qwen_asr_model,
@@ -652,7 +716,8 @@ else:
             insert_images=insert_images,
             vlm_concurrency=vlm_workers,
             asr_concurrency=asr_workers,
-            reference_files=reference_files
+            reference_files=reference_files,
+            transcript_only=st.session_state.transcript_only
         )
         
         try:
@@ -701,23 +766,28 @@ else:
                     main_progress_bar.progress(1.0)
                     sub_progress_bar.empty()
                     sub_progress_text.empty()
-                    
+
                     st.success(text)
-                    
-                    st.session_state.current_notes = full_llm_response
+
+                    if transcript_only:
+                        st.session_state.current_notes = st.session_state.full_transcript
+                        st.session_state.transcript_output_path = value
+                    else:
+                        st.session_state.current_notes = full_llm_response
+                        st.session_state.transcript_output_path = None
                     st.session_state.processing_started = False
                     stop_button_placeholder.empty()
-                    
-                    if not keep_temp_files:
+
+                    if not keep_temp_files and not transcript_only:
                         transcript_path = os.path.join("temp", "source_transcript.txt")
                         try:
                             if os.path.exists(transcript_path):
                                 os.remove(transcript_path)
                         except OSError as e:
                             st.warning(f"无法自动删除文字稿文件 '{transcript_path}': {e}")
-                    else:
+                    elif not transcript_only:
                         st.info("已根据您的设置，保留了语音转文字稿。")
-                    
+
                     cleanup_temp_file(temp_file_path)
                     st.rerun() 
         finally:
@@ -733,38 +803,61 @@ else:
 
 
     if st.session_state.current_notes:
-        
+        transcript_only = st.session_state.get("transcript_only", False)
+
         st.markdown("---")
-        st.subheader("🎉 智能笔记")
-        
+        if transcript_only:
+            st.subheader("📝 语音转文字稿")
+        else:
+            st.subheader("🎉 智能笔记")
+
         note_display_area = st.empty()
         note_display_area.markdown(st.session_state.current_notes)
-        
-        assets_dir = os.path.join("output", "assets")
-        has_assets = os.path.exists(assets_dir) and len(os.listdir(assets_dir)) > 0
-        
-        if has_assets:
-            try:
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                    zf.writestr(f"{st.session_state.output_filename}.md", st.session_state.current_notes)
-                    
-                    for file_name in os.listdir(assets_dir):
-                        full_path = os.path.join(assets_dir, file_name)
-                        if os.path.isfile(full_path):
-                            zf.write(full_path, f"assets/{file_name}")
-                
-                st.download_button(
-                    label=f"📦 下载笔记压缩包 (含图片) .zip",
-                    data=zip_buffer.getvalue(),
-                    file_name=f"{st.session_state.output_filename}.zip",
-                    mime="application/zip",
-                    use_container_width=True,
-                    disabled=is_busy,
-                    help="推荐下载！包含 Markdown 笔记和所有引用的图片，解压后图片可正常显示。"
-                )
-            except Exception as e:
-                st.error(f"生成压缩包失败: {e}")
+
+        if transcript_only:
+            st.download_button(
+                label=f"下载语音转文字稿 ({st.session_state.output_filename}.txt)",
+                data=st.session_state.current_notes,
+                file_name=f"{st.session_state.output_filename}.txt",
+                mime="text/plain",
+                use_container_width=True,
+                disabled=is_busy
+            )
+        else:
+            assets_dir = os.path.join("output", "assets")
+            has_assets = os.path.exists(assets_dir) and len(os.listdir(assets_dir)) > 0
+
+            if has_assets:
+                try:
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                        zf.writestr(f"{st.session_state.output_filename}.md", st.session_state.current_notes)
+
+                        for file_name in os.listdir(assets_dir):
+                            full_path = os.path.join(assets_dir, file_name)
+                            if os.path.isfile(full_path):
+                                zf.write(full_path, f"assets/{file_name}")
+
+                    st.download_button(
+                        label=f"📦 下载笔记压缩包 (含图片) .zip",
+                        data=zip_buffer.getvalue(),
+                        file_name=f"{st.session_state.output_filename}.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                        disabled=is_busy,
+                        help="推荐下载！包含 Markdown 笔记和所有引用的图片，解压后图片可正常显示。"
+                    )
+                except Exception as e:
+                    st.error(f"生成压缩包失败: {e}")
+                    st.download_button(
+                        label=f"下载当前笔记 ({st.session_state.output_filename}.md)",
+                        data=st.session_state.current_notes,
+                        file_name=f"{st.session_state.output_filename}.md",
+                        mime="text/markdown",
+                        use_container_width=True,
+                        disabled=is_busy
+                    )
+            else:
                 st.download_button(
                     label=f"下载当前笔记 ({st.session_state.output_filename}.md)",
                     data=st.session_state.current_notes,
@@ -773,70 +866,62 @@ else:
                     use_container_width=True,
                     disabled=is_busy
                 )
-        else:
-            st.download_button(
-                label=f"下载当前笔记 ({st.session_state.output_filename}.md)",
-                data=st.session_state.current_notes,
-                file_name=f"{st.session_state.output_filename}.md",
-                mime="text/markdown",
-                use_container_width=True,
-                disabled=is_busy
-            )
-        
-        st.markdown("---")
-        st.subheader("✍️ 笔记精炼")
         
         def handle_refinement_stop():
             st.session_state.refinement_stop_requested = True
-        
-        refinement_stop_button_placeholder = st.empty()
-        
-        st.info("对当前生成的笔记不满意？请选择快捷指令或输入您的修改意见。")
 
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.selectbox(
-                "快捷指令:",
-                (
-                    "(请选择一个快捷指令)", 
-                    "帮我总结得更简洁", 
-                    "帮我扩写得更详细 (需要参考原始转录稿)", 
-                    "把语气变得更生动有趣",
-                    "把语气变得更专业严肃",
-                    "帮我用项目符号(bullet points)重新组织"
-                ),
-                disabled=is_busy,
-                key="preset_feedback",
-                on_change=on_preset_change
-            )
-        
-        with col2:
-            st.text_input(
-                "或输入你的自定义指令:", 
-                placeholder="例如：请重点扩写第二部分...",
-                disabled=is_busy,
-                key="custom_feedback",
-                on_change=on_custom_change
-            )
+        if not transcript_only:
+            st.markdown("---")
+            st.subheader("✍️ 笔记精炼")
 
-        preset_val = st.session_state.preset_feedback
-        custom_val = st.session_state.custom_feedback
-        feedback = custom_val if custom_val else preset_val
-        
-        if st.button("🚀 开始精炼", use_container_width=True, type="primary", disabled=is_busy):
-            
-            if feedback == "(请选择一个快捷指令)" or not feedback:
-                st.warning("请输入或选择一个修改指令。")
-            elif not st.session_state.full_transcript:
-                st.error("错误：未找到原始转录稿，无法进行精炼。请重新处理文件。")
-            else:
-                st.session_state.refinement_feedback = feedback
-                st.session_state.refinement_in_progress = True
-                st.session_state.refinement_stop_requested = False
-                st.rerun()
+            refinement_stop_button_placeholder = st.empty()
 
-    if st.session_state.refinement_in_progress and not st.session_state.processing_started:
+            st.info("对当前生成的笔记不满意？请选择快捷指令或输入您的修改意见。")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.selectbox(
+                    "快捷指令:",
+                    (
+                        "(请选择一个快捷指令)",
+                        "帮我总结得更简洁",
+                        "帮我扩写得更详细 (需要参考原始转录稿)",
+                        "把语气变得更生动有趣",
+                        "把语气变得更专业严肃",
+                        "帮我用项目符号(bullet points)重新组织"
+                    ),
+                    disabled=is_busy,
+                    key="preset_feedback",
+                    on_change=on_preset_change
+                )
+
+            with col2:
+                st.text_input(
+                    "或输入你的自定义指令:",
+                    placeholder="例如：请重点扩写第二部分...",
+                    disabled=is_busy,
+                    key="custom_feedback",
+                    on_change=on_custom_change
+                )
+
+            preset_val = st.session_state.preset_feedback
+            custom_val = st.session_state.custom_feedback
+            feedback = custom_val if custom_val else preset_val
+
+            if st.button("🚀 开始精炼", use_container_width=True, type="primary", disabled=is_busy):
+
+                if feedback == "(请选择一个快捷指令)" or not feedback:
+                    st.warning("请输入或选择一个修改指令。")
+                elif not st.session_state.full_transcript:
+                    st.error("错误：未找到原始转录稿，无法进行精炼。请重新处理文件。")
+                else:
+                    st.session_state.refinement_feedback = feedback
+                    st.session_state.refinement_in_progress = True
+                    st.session_state.refinement_stop_requested = False
+                    st.rerun()
+
+    if st.session_state.refinement_in_progress and not st.session_state.processing_started and not st.session_state.get("transcript_only", False):
 
         refinement_stop_button_placeholder.button("⏹️ 停止精炼", on_click=handle_refinement_stop, use_container_width=True)
         st.info(f"正在根据指令精炼笔记: *'{st.session_state.refinement_feedback}'*")

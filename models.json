@@ -4,7 +4,9 @@
         "qwen-plus-2025-07-28",
         "qwen-flash-2025-07-28",
         "deepseek-v3.2-exp",
-        "qwen-flash"
+        "qwen-flash",
+        "qwen3.5-flash",
+        "deepseek-v4-flash"
     ],
     "vlm_models": [
         "qwen3-vl-plus",
@@ -26,6 +28,7 @@
         "qwen-audio-turbo-1204",
         "qwen-audio-turbo-0807",
         "qwen-audio-asr",
-        "qwen-audio-asr-1204"
+        "qwen-audio-asr-1204",
+        "qwen3-asr-flash-2026-02-10"
     ]
 }
