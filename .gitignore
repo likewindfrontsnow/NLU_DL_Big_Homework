@@ -7,10 +7,6 @@ venv/
 .venv/
 llm_video_to_note/
 
-.env
-.env.*
-!.env.example
-
 temp/
 logs/
 output/
