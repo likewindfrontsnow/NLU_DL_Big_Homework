@@ -8,6 +8,7 @@ from http import HTTPStatus
 
 def _create_dummy_wav(duration_sec=0.5):
     temp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    temp.close()
     try:
         with wave.open(temp.name, 'w') as wav_file:
             n_channels = 1
@@ -29,6 +30,7 @@ def _create_dummy_wav(duration_sec=0.5):
 
 def _create_dummy_image():
     temp = tempfile.NamedTemporaryFile(suffix=".bmp", delete=False)
+    temp.close()
     try:
         width, height = 32, 32
         row_padding = (4 - (width * 3) % 4) % 4
@@ -87,6 +89,10 @@ def verify_llm_model(api_key: str, base_url: str, model_name: str):
 
         if response.status_code == 401:
             return False, f"❌ 认证失败 (401): API Key 无效或过期。详情: {err_msg}"
+        elif response.status_code == 403 and ('free quota' in err_msg.lower() or 'free tier' in err_msg.lower()):
+            return False, "❌ 该模型免费额度已用完，当前仅允许使用免费额度。可选择其他模型，或到百炼控制台自行确认付费设置；这不表示 Key 无效或模型已下线。"
+        elif response.status_code == 403:
+            return False, f"❌ 访问受限 (403)：请检查模型权限、地域及账户额度。详情: {err_msg}"
         elif response.status_code == 404:
             return False, f"❌ 模型不存在 (404): 服务端找不到模型 '{model_name}'。详情: {err_msg}"
         elif response.status_code == 429:
@@ -109,7 +115,6 @@ def verify_asr_model(api_key: str, model_name: str):
         return False, "本地环境错误: 无法生成测试音频文件"
 
     abs_audio_path = os.path.abspath(dummy_audio_path)
-    dashscope.api_key = api_key
     
     try:
         messages = [
@@ -120,6 +125,8 @@ def verify_asr_model(api_key: str, model_name: str):
         ]
         response = dashscope.MultiModalConversation.call(
             model=model_name,
+            api_key=api_key,
+            request_timeout=15,
             messages=messages,
         )
 
@@ -148,7 +155,6 @@ def verify_vlm_model(api_key: str, model_name: str):
         return False, "本地环境错误: 无法生成测试图片文件"
     
     abs_image_path = os.path.abspath(dummy_image_path)
-    dashscope.api_key = api_key
 
     try:
         messages = [
@@ -163,6 +169,8 @@ def verify_vlm_model(api_key: str, model_name: str):
         
         response = dashscope.MultiModalConversation.call(
             model=model_name,
+            api_key=api_key,
+            request_timeout=15,
             messages=messages,
             result_format="message"
         )

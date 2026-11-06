@@ -6,6 +6,9 @@ from typing import List, Tuple
 from .frame_extractor import FrameExtractor
 from ai_services.vlm_api import analyze_image
 from PIL import Image
+from core.note_assets import asset_relative_path
+from core.tasks import TaskCancelled, check_cancelled, completed_futures
+from core.utils import retryable
 
 class VisualManager:
     def __init__(self):
@@ -47,15 +50,17 @@ class VisualManager:
         backup_model: str = None,
         keep_intermediate_files: bool = False,
         insert_images: bool = False,
-        image_output_dir: str = None
+        image_output_dir: str = None,
+        frame_dir: str = None, config=None, cancel_event=None
     ):
-        base_dir = os.path.dirname(os.path.abspath(video_path))
-        temp_frame_dir = os.path.join("temp", "vlm_frames_output")
+        if frame_dir is None:
+            raise ValueError("必须提供任务专属抽帧目录")
+        temp_frame_dir = frame_dir
         
         extraction_gen = self.extractor.extract_frames_generator(
             video_path, 
             interval_seconds=interval_seconds, 
-            output_dir=temp_frame_dir
+            output_dir=temp_frame_dir, cancel_event=cancel_event
         )
         
         frames = []
@@ -83,6 +88,7 @@ class VisualManager:
             SIMILARITY_THRESHOLD = 12.0 
             
             for i in range(1, len(frames)):
+                check_cancelled(cancel_event)
                 current_frame = frames[i]
                 diff = self._calculate_image_difference(last_kept_frame, current_frame)
                 
@@ -111,22 +117,27 @@ class VisualManager:
             last_error = None
             for m in models_to_try:
                 try:
-                    desc = analyze_image(frame_path, mode=mode, model=m)
+                    desc = analyze_image(frame_path, mode=mode, model=m, config=config, cancel_event=cancel_event)
                     return (timestamp, desc, frame_path)
+                except TaskCancelled:
+                    raise
                 except Exception as e:
                     last_error = e
-                    continue
+                    if not retryable(e):
+                        break
             return (timestamp, f"[该帧分析失败: {str(last_error)}]", frame_path)
 
         completed_count = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_frame = {executor.submit(_analyze_task, fp): fp for fp in frames}
             
-            for future in concurrent.futures.as_completed(future_to_frame):
+            for future in completed_futures(future_to_frame, cancel_event):
                 completed_count += 1
                 try:
                     res = future.result()
                     results.append(res)
+                except TaskCancelled:
+                    raise
                 except Exception:
                     pass
                 
@@ -152,6 +163,7 @@ class VisualManager:
                 pass
 
         for timestamp, desc, frame_src in results:
+            check_cancelled(cancel_event)
             item_text = f"**[{timestamp}]**\n{desc}\n"
             if insert_images and image_output_dir and os.path.exists(frame_src):
                 try:
@@ -159,9 +171,10 @@ class VisualManager:
                     safe_name = f"{timestamp.replace(':', '')}_{file_name}"
                     dst_path = os.path.join(image_output_dir, safe_name)
                     shutil.copy(frame_src, dst_path)
-                    rel_dir_name = os.path.basename(image_output_dir)
-                    rel_path = f"{rel_dir_name}/{safe_name}"
+                    rel_path = asset_relative_path(image_output_dir, safe_name)
                     item_text += f"\n![关键帧截图]({rel_path})\n"
+                except TaskCancelled:
+                    raise
                 except Exception:
                     pass
             summary_lines.append(item_text)

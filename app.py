@@ -2,21 +2,25 @@ import streamlit as st
 import os
 import time
 import shutil
-import atexit
-import signal
-import sys
+import threading
+import uuid
 import zipfile
 import io
 from main import main_process_generator
-from core.config import LLM_CONFIG, save_models_config, load_models_config, ASR_MODELS_WITH_CONTEXT_SUPPORT
-from ai_services.llm_api import refine_llm_generation
-from dotenv import set_key
+from core.config import LLM_CONFIG, save_environment, save_models_config, load_models_config, ASR_MODELS_WITH_CONTEXT_SUPPORT
+from ai_services.llm_api import refinement_events
+from dotenv import dotenv_values
+from core.tasks import (TaskCancelled, background_events, snapshot_config, validate_output_name)
 from core.model_verifier import verify_llm_model, verify_asr_model, verify_vlm_model
-from core.uploads import save_uploaded_file
+from core.uploads import save_uploaded_file, reset_upload_state
+from core.doc_parser import SUPPORTED_DOCUMENT_EXTS
+from core.note_assets import add_assets_to_zip
+from core.model_catalog import sync_catalog, model_label
+from datetime import datetime, timezone, timedelta
 
 VIDEO_EXTS = {'mp4', 'mov', 'mpeg', 'webm'}
 AUDIO_EXTS = {'mp3', 'm4a', 'wav', 'amr', 'mpga'}
-DOC_EXTS = {'txt', 'md', 'mdx', 'markdown', 'pdf', 'html', 'xlsx', 'xls', 'doc', 'docx', 'csv', 'eml', 'msg', 'pptx', 'ppt', 'xml', 'epub'}
+DOC_EXTS = {extension.lstrip('.') for extension in SUPPORTED_DOCUMENT_EXTS}
 ALL_EXTS = list(VIDEO_EXTS | AUDIO_EXTS | DOC_EXTS)
 
 INSTRUCTION_OPTIONS = [
@@ -36,30 +40,19 @@ NOTE_TYPE_MAPPING = {
     "None": "无"
 }
 
-def global_cleanup():
-    temp_dir = "temp"
-    try:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            os.makedirs(temp_dir, exist_ok=True)
-    except Exception:
-        pass
-
-atexit.register(global_cleanup)
-
-def signal_handler(sig, frame):
-    global_cleanup()
-    sys.exit(0)
-
-if sys.platform != 'win32':
-    try:
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-    except:
-        pass
-
 st.set_page_config(page_title="智能笔记 Agent", layout="wide")
 st.title("👨‍💻 智能内容生成 Agent")
+
+if "runtime_config" not in st.session_state:
+    settings = snapshot_config(LLM_CONFIG)
+    stored = dotenv_values('.env')
+    for field, env_key in [('api_key', 'LLM_API_KEY'), ('base_url', 'LLM_BASE_URL'),
+                           ('model', 'LLM_MODEL'), ('asr_api_key', 'DASHSCOPE_API_KEY')]:
+        if stored.get(env_key):
+            settings[field] = stored[env_key]
+    st.session_state.runtime_config = settings
+session_config = st.session_state.runtime_config
+
 
 def cleanup_temp_file(file_path):
     try:
@@ -69,28 +62,28 @@ def cleanup_temp_file(file_path):
         pass
 
 def _save_key(key):
-    env_path = ".env"
-    set_key(env_path, "LLM_API_KEY", key)
-    set_key(env_path, "DASHSCOPE_API_KEY", key)
-    os.environ["LLM_API_KEY"] = key
-    os.environ["DASHSCOPE_API_KEY"] = key
-    LLM_CONFIG["api_key"] = key
-    if not LLM_CONFIG.get("provider_name"):
-        LLM_CONFIG["provider_name"] = "DashCope(Qwen)"
-        set_key(env_path, "LLM_PROVIDER_NAME", "DashCope(Qwen)")
+    save_environment({"LLM_API_KEY": key, "DASHSCOPE_API_KEY": key})
+    session_config["asr_api_key"] = key
+    session_config["api_key"] = key
+    if not session_config.get("provider_name"):
+        session_config["provider_name"] = "DashCope(Qwen)"
+        save_environment({"LLM_PROVIDER_NAME": "DashScope(Qwen)"})
 
 def init_model_config_state():
     if "llm_models" not in st.session_state:
         config = load_models_config()
+        st.session_state.catalog_local_models = snapshot_config(config)
         st.session_state.llm_models = config.get("llm_models", [])
         st.session_state.vlm_models = config.get("vlm_models", [])
         st.session_state.asr_models = config.get("asr_models", [])
         
-        LLM_CONFIG["supported_llm"] = st.session_state.llm_models
-        LLM_CONFIG["supported_vlm"] = st.session_state.vlm_models
-        LLM_CONFIG["supported_asr_models"] = st.session_state.asr_models
+        session_config["supported_llm"] = st.session_state.llm_models
+        session_config["supported_vlm"] = st.session_state.vlm_models
+        session_config["supported_asr_models"] = st.session_state.asr_models
 
 init_model_config_state()
+if 'catalog_local_models' not in st.session_state:
+    st.session_state.catalog_local_models = snapshot_config(load_models_config())
 
 if "has_validated_on_startup" not in st.session_state:
     st.session_state.has_validated_on_startup = False
@@ -101,29 +94,31 @@ if "key_validation_failure" not in st.session_state:
 if "force_entered_without_verification" not in st.session_state:
     st.session_state.force_entered_without_verification = False
 
-if (LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup
-        and not st.session_state.force_entered_without_verification
-        and not st.session_state.startup_validation_attempted):
-    st.session_state.startup_validation_attempted = True
-    with st.spinner("🔄 正在启动自检：验证 API Key 有效性..."):
-        check_key = LLM_CONFIG["api_key"]
-        check_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        check_model = LLM_CONFIG.get("model", st.session_state.llm_models[0] if st.session_state.llm_models else "qwen-plus")
+def render_catalog_controls(api_key, location, disabled=False):
+    refresh = st.button("🔄 刷新模型列表", key=f"refresh_catalog_{location}",
+                        disabled=disabled or not api_key)
+    if not disabled:
+        sync_catalog(st.session_state, api_key,
+                     session_config.get('base_url') or 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                     force=refresh)
+    for source, target in [('llm_models', 'supported_llm'), ('vlm_models', 'supported_vlm'),
+                           ('asr_models', 'supported_asr_models')]:
+        session_config[target] = list(st.session_state[source])
+    synced = st.session_state.get('catalog_synced_at')
+    if synced:
+        local_time = datetime.fromtimestamp(synced, timezone(timedelta(hours=8)))
+        st.caption(f"最近同步：{local_time:%Y-%m-%d %H:%M}（北京时间）；缓存有效期 24 小时。")
+    else:
+        st.caption("当前使用本地备用列表。输入 Key 后自动同步，也可点击刷新。")
+    if st.session_state.get('catalog_message'):
+        st.warning(st.session_state.catalog_message)
+    st.caption("目录同步不调用生成模型，不代表模型有免费额度；仅在点击验证时调用所选模型。")
 
-        is_valid, msg = verify_llm_model(check_key, check_url, check_model)
 
-        if is_valid:
-            st.session_state.has_validated_on_startup = True
-        else:
-            st.session_state.key_validation_failure = (check_key, msg)
-            st.warning(f"⚠️ 启动自检：使用模型 **{check_model}** 验证未通过。\n\n**原因**: {msg}")
-            st.info("您的 API Key 可能仍然有效，只是所选模型无可用额度。可在下方选择其他模型重新验证、重新输入 Key，或强行进入。")
-            # 不再自动清空 Key，让用户有机会换模型重试
-
-if not LLM_CONFIG.get("api_key") or not (
+if not session_config.get("api_key") or not (
         st.session_state.has_validated_on_startup
         or st.session_state.force_entered_without_verification):
-    existing_key = LLM_CONFIG.get("api_key", "")
+    existing_key = session_config.get("api_key", "")
     if not st.session_state.get("has_validated_on_startup", True) and not existing_key:
          st.markdown("### 👋 欢迎使用")
 
@@ -144,16 +139,20 @@ if not LLM_CONFIG.get("api_key") or not (
         key="api_key_input_main"
     )
 
+    render_catalog_controls(new_key, "verify")
     last_verify_model = os.getenv("LAST_VERIFY_MODEL", "")
     available_verify_models = st.session_state.llm_models if st.session_state.llm_models else ["qwen-plus"]
     default_verify_index = 0
     if last_verify_model and last_verify_model in available_verify_models:
         default_verify_index = available_verify_models.index(last_verify_model)
+    if st.session_state.get('verify_model_select') not in available_verify_models:
+        st.session_state.verify_model_select = available_verify_models[default_verify_index]
     verify_model = st.selectbox(
         "请选择用于验证 API Key 的模型:",
         available_verify_models,
         index=default_verify_index,
         key="verify_model_select",
+        format_func=lambda name: model_label(st.session_state, name),
         help="选择一个您有可用额度的模型来进行验证。验证通过后不影响后续使用其他模型。"
     )
 
@@ -168,7 +167,7 @@ if not LLM_CONFIG.get("api_key") or not (
             if clean:
                 if clean not in st.session_state.llm_models:
                     st.session_state.llm_models.append(clean)
-                    LLM_CONFIG["supported_llm"] = st.session_state.llm_models
+                    session_config["supported_llm"] = st.session_state.llm_models
                     save_models_config({
                         "llm_models": st.session_state.llm_models,
                         "vlm_models": st.session_state.vlm_models,
@@ -196,13 +195,13 @@ if not LLM_CONFIG.get("api_key") or not (
         if key_to_check and key_to_check.startswith("sk-"):
             st.info(f"正在使用模型 **{verify_model}** 验证 Key 的有效性...")
 
-            verify_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            verify_url = session_config.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
             is_valid, msg = verify_llm_model(key_to_check, verify_url, verify_model)
 
             if is_valid:
                 _save_key(key_to_check)
-                set_key(".env", "LAST_VERIFY_MODEL", verify_model)
+                save_environment({"LAST_VERIFY_MODEL": verify_model})
                 st.session_state.has_validated_on_startup = True
                 st.session_state.force_entered_without_verification = False
                 st.session_state.key_validation_failure = None
@@ -227,7 +226,7 @@ if not LLM_CONFIG.get("api_key") or not (
 else:
     st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
     if st.session_state.force_entered_without_verification:
-        st.warning("当前 API Key 未通过验证，调用模型时仍可能失败。")
+        st.warning("所选模型尚未验证通过（可能是权限或额度问题），实际调用仍可能失败。")
 
     default_states = {
         "processing_started": False,
@@ -235,6 +234,9 @@ else:
         "full_transcript": None,
         "output_filename": "我的学习笔记",
         "last_uploaded_filename": None,
+        "current_assets_dir": None,
+        "current_output_dir": None,
+        "transcript_output_path": None,
         "processing_has_failed": False,
         "api_key_invalid": False,
         "asr_context": "",
@@ -253,7 +255,7 @@ else:
 
     is_busy = st.session_state.processing_started or st.session_state.refinement_in_progress
 
-    provider_name = LLM_CONFIG.get('provider_name', 'LLM')
+    provider_name = session_config.get('provider_name', 'LLM')
     if st.session_state.get("transcript_only", False):
         st.info(f"💡 **提示**: 当前为 **仅转录模式**，处理后仅输出语音转文字稿，不生成笔记。")
     else:
@@ -261,8 +263,9 @@ else:
 
     with st.sidebar:
         st.header("⚙️ 参数配置")
+        render_catalog_controls(session_config.get("api_key"), "sidebar", disabled=is_busy)
 
-        current_llm_model = LLM_CONFIG.get("model")
+        current_llm_model = session_config.get("model")
         available_llm = st.session_state.llm_models
         
         if current_llm_model not in available_llm and available_llm:
@@ -278,18 +281,23 @@ else:
         selected_llm_model = st.selectbox(
             "请选择笔记生成模型 (LLM):",
             available_llm,
-            index=llm_index,
+            format_func=lambda name: model_label(st.session_state, name),            index=llm_index,
             disabled=is_busy,
             help="选择用于生成笔记的大语言模型。"
         )
-        LLM_CONFIG["model"] = selected_llm_model
-        set_key(".env", "LLM_MODEL", selected_llm_model)
+        session_config["model"] = selected_llm_model
 
         st.session_state.output_filename = st.text_input(
             "请输入希望的笔记文件名 (无需后缀)",
             value=st.session_state.output_filename,
             disabled=is_busy
         )
+
+        try:
+            validate_output_name(st.session_state.output_filename)
+        except ValueError as error:
+            st.error(str(error))
+            st.stop()
 
         transcript_only = st.toggle(
             "仅生成语音转文字稿",
@@ -311,66 +319,43 @@ else:
 
         st.markdown("---")
         st.subheader("语音转录 (ASR) 配置")
-        transcription_provider = st.radio(
-            "请选择语音转录服务:",
-            ("Qwen API","Local Whisper"),
+        transcription_provider = "Qwen API"
+        selected_backup = None
+        qwen_asr_model_options = st.session_state.asr_models
+        if not qwen_asr_model_options:
+             qwen_asr_model_options = ["qwen3-asr-flash"]
+
+        qwen_asr_model_index = 0
+        if "qwen3-asr-flash" in qwen_asr_model_options:
+            qwen_asr_model_index = qwen_asr_model_options.index("qwen3-asr-flash")
+
+        qwen_asr_model = st.selectbox(
+            "请选择 Qwen ASR 模型:",
+            qwen_asr_model_options,
+            format_func=lambda name: model_label(st.session_state, name),            index=qwen_asr_model_index,
+            disabled=is_busy,
+            help="选择用于语音转录的模型。"
+        )
+
+        backup_options = ["(无备选)"] + qwen_asr_model_options
+        selected_backup_str = st.selectbox(
+            "请选择备选模型 (遇到限流时自动切换):",
+            backup_options,
             index=0,
-            key="transcription_provider",
-            help="选择转录服务。",
             disabled=is_busy
         )
-        
-        whisper_model_size = "tiny" 
-        qwen_asr_model = "qwen-audio-asr-latest"
-        selected_backup = None
-        asr_workers = 10
+        selected_backup = None if selected_backup_str == "(无备选)" else selected_backup_str
+        session_config["asr_backup_model"] = selected_backup
 
-        if transcription_provider == "Local Whisper":
-            whisper_model_size = st.selectbox(
-                "请选择 Whisper 模型:",
-                ("tiny", "base", "small", "medium", "large"),
-                index=0,
-                help="模型越大，转录越准确，但速度越慢。",
-                disabled=is_busy
-            )
-            if st.session_state.asr_context != "":
-                st.session_state.asr_context = "" 
-        else:
-            qwen_asr_model_options = st.session_state.asr_models
-            if not qwen_asr_model_options:
-                 qwen_asr_model_options = ["qwen3-asr-flash"]
+        asr_workers = st.slider(
+            "ASR 并发线程数",
+            min_value=1,
+            max_value=20,
+            value=10,
+            help="增加线程数可加快转录速度，但可能触发 API 限流。",
+            disabled=is_busy
+        )
 
-            qwen_asr_model_index = 0
-            if "qwen3-asr-flash" in qwen_asr_model_options:
-                qwen_asr_model_index = qwen_asr_model_options.index("qwen3-asr-flash")
-
-            qwen_asr_model = st.selectbox(
-                "请选择 Qwen ASR 模型:",
-                qwen_asr_model_options,
-                index=qwen_asr_model_index,
-                disabled=is_busy,
-                help="选择用于语音转录的模型。"
-            )
-            
-            backup_options = ["(无备选)"] + qwen_asr_model_options
-            selected_backup_str = st.selectbox(
-                "请选择备选模型 (遇到限流时自动切换):",
-                backup_options,
-                index=0,
-                disabled=is_busy
-            )
-            selected_backup = None if selected_backup_str == "(无备选)" else selected_backup_str
-            LLM_CONFIG["asr_backup_model"] = selected_backup
-
-            asr_workers = st.slider(
-                "ASR 并发线程数",
-                min_value=1,
-                max_value=20,
-                value=10,
-                help="增加线程数可加快转录速度，但可能触发 API 限流。",
-                disabled=is_busy
-            )
-        
         if transcription_provider == "Qwen API":
             if qwen_asr_model in ASR_MODELS_WITH_CONTEXT_SUPPORT:
                 st.markdown("---")
@@ -416,7 +401,7 @@ else:
             selected_vlm_model = st.selectbox(
                 "请选择 VLM 模型:",
                 selected_vlm_model_options,
-                index=0,
+                format_func=lambda name: model_label(st.session_state, name),                index=0,
                 disabled=is_busy
             )
 
@@ -428,7 +413,7 @@ else:
                 disabled=is_busy
             )
             selected_vlm_backup = None if selected_vlm_backup_str == "(无备选)" else selected_vlm_backup_str
-            LLM_CONFIG["vlm_backup_model"] = selected_vlm_backup
+            session_config["vlm_backup_model"] = selected_vlm_backup
 
             vlm_workers = st.slider(
                 "VLM 并发线程数",
@@ -455,8 +440,8 @@ else:
         st.markdown("---")
 
         if st.button("🔍 全面检测模型连通性", disabled=is_busy, use_container_width=True):
-            current_api_key = os.getenv("DASHSCOPE_API_KEY") or LLM_CONFIG.get("api_key")
-            current_base_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            current_api_key = session_config.get("asr_api_key") or session_config.get("api_key")
+            current_base_url = session_config.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
             
             if not current_api_key:
                 st.error("❌ 未检测到 API Key，请先在上一步输入并保存。")
@@ -489,8 +474,6 @@ else:
                             else:
                                 st.write(f":red[{bk_msg}]")
                                 all_passed = False
-                    else:
-                        st.write("2. ASR 服务选定为 **Local Whisper**，跳过云端验证。")
 
                     if enable_visual_analysis:
                         st.write(f"4. 正在连接视觉分析 VLM: **{selected_vlm_model}** ...")
@@ -562,7 +545,7 @@ else:
         st.markdown("---")
 
         with st.expander("🛠️ 模型管理 (列表配置)", expanded=False):
-            st.info("在此添加或删除支持的模型。修改将即时生效。")
+            st.info("列表优先从官方目录同步。这里可临时手动补充或删除，下一次成功同步可能更新这些调整。")
             
             tab_llm, tab_vlm, tab_asr = st.tabs(["LLM (笔记)", "VLM (视觉)", "ASR (语音)"])
             
@@ -641,10 +624,15 @@ else:
         - **文档文件**: `{', '.join(sorted(list(DOC_EXTS)))}`
         """)
 
+    def on_upload_change():
+        reset_upload_state(st.session_state)
+
     uploaded_file = st.file_uploader(
         "上传视频、音频或文档", 
         type=ALL_EXTS,
-        disabled=is_busy
+        disabled=is_busy,
+        key="source_upload",
+        on_change=on_upload_change,
     )
 
     if uploaded_file is not None and st.session_state.last_uploaded_filename != uploaded_file.name:
@@ -657,8 +645,17 @@ else:
 
     if uploaded_file is not None and not is_busy and not st.session_state.processing_has_failed:
         if st.button("开始生成", use_container_width=True, type="primary"):
+            try:
+                st.session_state.output_filename = validate_output_name(st.session_state.output_filename)
+            except ValueError as error:
+                st.error(str(error))
+                st.stop()
+            st.session_state.cancel_event = threading.Event()
+            st.session_state.current_output_dir = None
+            st.session_state.transcript_output_path = None
             st.session_state.processing_started = True
             st.session_state.current_notes = None       
+            st.session_state.current_assets_dir = None
             st.session_state.full_transcript = None     
             st.session_state.processing_has_failed = False
             st.session_state.stop_requested = False
@@ -668,6 +665,8 @@ else:
 
     def handle_stop():
         st.session_state.stop_requested = True
+        if st.session_state.get('cancel_event') is not None:
+            st.session_state.cancel_event.set()
 
     def on_preset_change():
         if st.session_state.preset_feedback != "(请选择一个快捷指令)":
@@ -688,6 +687,7 @@ else:
         st.markdown("---")
         st.subheader("处理进度")
         
+        current_progress_value = 0.0
         main_progress_bar = st.progress(0)
         main_progress_text = st.empty()
         sub_progress_bar = st.progress(0)
@@ -702,12 +702,9 @@ else:
             stream_status = "流式" if stream_output else "非流式"
             st.subheader(f"正在生成笔记 ({provider_name} / {selected_llm_model} {stream_status})...")
 
-        if transcription_provider == "Local Whisper":
-            asr_config_text = f"转录服务: **Local Whisper** (模型: **{whisper_model_size}**)"
-        else:
-            asr_config_text = f"转录服务: **Qwen API** (模型: **{qwen_asr_model}**)"
-            if st.session_state.asr_context:
-                asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
+        asr_config_text = f"转录服务: **Qwen API** (模型: **{qwen_asr_model}**)"
+        if st.session_state.asr_context:
+            asr_config_text += f" | **上下文:** *{st.session_state.asr_context[:30]}...*"
 
         if transcript_only:
             st.info(f"{asr_config_text} | **仅转录模式**")
@@ -729,9 +726,7 @@ else:
         generator = main_process_generator(
             temp_file_path,
             st.session_state.output_filename,
-            whisper_model_size,
             stream_output,
-            transcription_provider,
             st.session_state.note_type,
             st.session_state.asr_context,
             final_custom_instructions,
@@ -744,9 +739,16 @@ else:
             vlm_concurrency=vlm_workers,
             asr_concurrency=asr_workers,
             reference_files=reference_files,
-            transcript_only=st.session_state.transcript_only
+            transcript_only=st.session_state.transcript_only,
+            keep_transcript=keep_temp_files,
+            config=snapshot_config(session_config),
+            cancel_event=st.session_state.cancel_event,
         )
         
+        generator = background_events(
+            generator, st.session_state.cancel_event,
+            cleanup=lambda path=temp_file_path: cleanup_temp_file(path))
+
         try:
             for event_type, value, *rest in generator:
                 
@@ -760,8 +762,11 @@ else:
 
                 text = rest[0] if rest else ""
 
-                if event_type == "progress":
-                    main_progress_bar.progress(float(value))
+                if event_type == "heartbeat":
+                    main_progress_bar.progress(current_progress_value)
+                elif event_type == "progress":
+                    current_progress_value = float(value)
+                    main_progress_bar.progress(current_progress_value)
                     main_progress_text.info(text)
                 elif event_type == "sub_progress":
                     sub_progress_bar.progress(float(value))
@@ -769,6 +774,15 @@ else:
                 
                 elif event_type == "transcript":
                     st.session_state.full_transcript = value
+
+                elif event_type == "output_dir":
+                    st.session_state.current_output_dir = value
+
+                elif event_type == "transcript_saved":
+                    st.session_state.transcript_output_path = value
+
+                elif event_type == "assets_dir":
+                    st.session_state.current_assets_dir = value
 
                 elif event_type == "llm_chunk":
                     full_llm_response += value
@@ -781,7 +795,6 @@ else:
                     
                     if "401" in text or "密钥无效" in text or "Unauthorized" in text:
                         st.session_state.api_key_invalid = True
-                    cleanup_temp_file(temp_file_path)
 
                     st.session_state.processing_has_failed = True 
                     st.session_state.processing_started = False
@@ -801,24 +814,17 @@ else:
                         st.session_state.transcript_output_path = value
                     else:
                         st.session_state.current_notes = full_llm_response
-                        st.session_state.transcript_output_path = None
                     st.session_state.processing_started = False
                     stop_button_placeholder.empty()
 
-                    if not keep_temp_files and not transcript_only:
-                        transcript_path = os.path.join("temp", "source_transcript.txt")
-                        try:
-                            if os.path.exists(transcript_path):
-                                os.remove(transcript_path)
-                        except OSError as e:
-                            st.warning(f"无法自动删除文字稿文件 '{transcript_path}': {e}")
-                    elif not transcript_only:
-                        st.info("已根据您的设置，保留了语音转文字稿。")
-
-                    cleanup_temp_file(temp_file_path)
+                    if keep_temp_files and st.session_state.transcript_output_path:
+                        st.info(f"文字稿已保留：{st.session_state.transcript_output_path}")
                     st.rerun() 
+        except TaskCancelled:
+            st.session_state.processing_started = False
+            st.warning("处理已停止。")
         finally:
-            cleanup_temp_file(temp_file_path)
+            generator.close()
             if st.session_state.processing_started:
                  st.session_state.processing_started = False
                  stop_button_placeholder.empty()
@@ -839,6 +845,10 @@ else:
         else:
             st.subheader("🎉 智能笔记")
 
+        if st.session_state.transcript_output_path:
+            st.caption(f"文字稿已保存：{st.session_state.transcript_output_path}")
+        if st.session_state.current_output_dir:
+            st.caption(f"本次输出目录：{st.session_state.current_output_dir}")
         note_display_area = st.empty()
         note_display_area.markdown(st.session_state.current_notes)
 
@@ -852,8 +862,8 @@ else:
                 disabled=is_busy
             )
         else:
-            assets_dir = os.path.join("output", "assets")
-            has_assets = os.path.exists(assets_dir) and len(os.listdir(assets_dir)) > 0
+            assets_dir = st.session_state.current_assets_dir
+            has_assets = assets_dir is not None and os.path.isdir(assets_dir) and bool(os.listdir(assets_dir))
 
             if has_assets:
                 try:
@@ -861,10 +871,7 @@ else:
                     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                         zf.writestr(f"{st.session_state.output_filename}.md", st.session_state.current_notes)
 
-                        for file_name in os.listdir(assets_dir):
-                            full_path = os.path.join(assets_dir, file_name)
-                            if os.path.isfile(full_path):
-                                zf.write(full_path, f"assets/{file_name}")
+                        add_assets_to_zip(zf, assets_dir)
 
                     st.download_button(
                         label=f"📦 下载笔记压缩包 (含图片) .zip",
@@ -897,6 +904,8 @@ else:
         
         def handle_refinement_stop():
             st.session_state.refinement_stop_requested = True
+            if st.session_state.get('refinement_cancel_event') is not None:
+                st.session_state.refinement_cancel_event.set()
 
         if not transcript_only:
             st.markdown("---")
@@ -944,6 +953,12 @@ else:
                 elif not st.session_state.full_transcript:
                     st.error("错误：未找到原始转录稿，无法进行精炼。请重新处理文件。")
                 else:
+                    try:
+                        validate_output_name(st.session_state.output_filename)
+                    except ValueError as error:
+                        st.error(str(error))
+                        st.stop()
+                    st.session_state.refinement_cancel_event = threading.Event()
                     st.session_state.refinement_feedback = feedback
                     st.session_state.refinement_in_progress = True
                     st.session_state.refinement_stop_requested = False
@@ -956,45 +971,43 @@ else:
         
         refined_notes = ""
         
+        regenerator = None
         try:
-            regenerator = refine_llm_generation(
+            events = refinement_events(
                 original_transcript=st.session_state.full_transcript,
                 current_notes=st.session_state.current_notes,
                 user_feedback=st.session_state.refinement_feedback,
-                stream_output=stream_output
+                stream_output=stream_output,
+                config=snapshot_config(session_config),
+                cancel_event=st.session_state.refinement_cancel_event,
             )
 
-            if stream_output:
-                for chunk in regenerator:
-                    if st.session_state.get("refinement_stop_requested", False):
-                        st.warning("精炼已由用户手动停止。")
-                        break
-                    
-                    if chunk:
-                        refined_notes += chunk
-                        note_display_area.markdown(refined_notes)
-            else:
-                if not st.session_state.get("refinement_stop_requested", False):
-                    refined_notes = regenerator
-                else:
-                    st.warning("精炼已由用户手动停止。")
+            regenerator = background_events(events, st.session_state.refinement_cancel_event)
+            for kind, chunk in regenerator:
+                if kind == 'llm_chunk' and chunk:
+                    refined_notes += chunk
+                note_display_area.markdown(refined_notes or st.session_state.current_notes)
 
             if not st.session_state.get("refinement_stop_requested", False):
                 st.session_state.current_notes = refined_notes if refined_notes else st.session_state.current_notes
                 try:
-                    save_path = os.path.join("output", f"{st.session_state.output_filename}_refined.md")
+                    save_path = os.path.join(st.session_state.current_output_dir, f"{validate_output_name(st.session_state.output_filename)}_refined_{uuid.uuid4().hex[:8]}.md")
                     with open(save_path, 'w', encoding='utf-8') as f:
                         f.write(st.session_state.current_notes)
                     st.success(f"精炼完成！")
                 except IOError as e:
                     st.error(f"保存精炼笔记失败: {e}")
 
+        except TaskCancelled:
+            st.warning("精炼已停止，保留原笔记。")
         except Exception as e:
             st.error(f"精炼过程中出错: {e}")
             if "401" in str(e) or "密钥无效" in str(e):
                 st.session_state.api_key_invalid = True
         
         finally:
+            if regenerator is not None:
+                regenerator.close()
             st.session_state.refinement_in_progress = False
             st.session_state.refinement_stop_requested = False
             refinement_stop_button_placeholder.empty()

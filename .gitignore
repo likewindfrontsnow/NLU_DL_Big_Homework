@@ -1,4 +1,6 @@
 __pycache__/
+.env
+.cache/
 *.pyc
 *.pyo
 *.pyd

@@ -2,13 +2,10 @@ import os
 import dashscope
 from http import HTTPStatus
 from typing import Literal, Optional
-from core.config import DASHSCOPE_API_KEY
-from core.utils import retry
-
-if DASHSCOPE_API_KEY:
-    dashscope.api_key = DASHSCOPE_API_KEY
-else:
-    dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
+import base64
+from core.config import LLM_CONFIG
+from core.tasks import check_cancelled, snapshot_config
+from core.utils import retry, APIError
 
 class VLMError(Exception):
     pass
@@ -60,13 +57,19 @@ def analyze_image(
     image_path: str, 
     mode: Literal["general", "ppt", "handwriting", "lecture_mixed"] = "general",
     custom_prompt: Optional[str] = None,
-    model: str = "qwen3-vl-plus"
+    model: str = "qwen3-vl-plus",
+    *, config=None, cancel_event=None
 ) -> str:
+    config = snapshot_config(LLM_CONFIG if config is None else config)
+    check_cancelled(cancel_event)
+    if not (config.get('asr_api_key') or config.get('api_key')):
+        raise ValueError('未设置视觉分析 API Key')
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"VLM Error: 找不到图片文件 -> {image_path}")
 
     final_prompt = custom_prompt if custom_prompt else VLM_PROMPTS.get(mode, VLM_PROMPTS["general"])
-    image_url = f"file://{os.path.abspath(image_path)}"
+    with open(image_path, 'rb') as source:
+        image_url = 'data:image/jpeg;base64,' + base64.b64encode(source.read()).decode('ascii')
 
     try:
         messages = [
@@ -81,10 +84,13 @@ def analyze_image(
 
         response = dashscope.MultiModalConversation.call(
             model=model,
+            api_key=config.get('asr_api_key') or config.get('api_key'),
+            request_timeout=30,
             messages=messages,
             result_format="message"
         )
 
+        check_cancelled(cancel_event)
         if response.status_code == HTTPStatus.OK:
             if response.output and response.output.choices:
                 content_list = response.output.choices[0].message.content
@@ -110,12 +116,7 @@ def analyze_image(
             else:
                 raise VLMError("API 响应结构异常，未找到 choices")
         else:
-            error_msg = f"Code: {response.code}, Message: {response.message}"
-            
-            if response.code == "Throttling.RateQuota" or response.status_code == 429:
-                raise Exception(f"VLM Rate Limit: {error_msg}")
-            
-            raise VLMError(f"DashScope API Error: {error_msg}")
+            raise APIError(response.status_code, response.code, response.message)
 
     except Exception as e:
         raise e
