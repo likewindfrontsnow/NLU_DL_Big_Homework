@@ -12,6 +12,7 @@ from core.config import LLM_CONFIG, save_models_config, load_models_config, ASR_
 from ai_services.llm_api import refine_llm_generation
 from dotenv import set_key
 from core.model_verifier import verify_llm_model, verify_asr_model, verify_vlm_model
+from core.uploads import save_uploaded_file
 
 VIDEO_EXTS = {'mp4', 'mov', 'mpeg', 'webm'}
 AUDIO_EXTS = {'mp3', 'm4a', 'wav', 'amr', 'mpga'}
@@ -93,8 +94,17 @@ init_model_config_state()
 
 if "has_validated_on_startup" not in st.session_state:
     st.session_state.has_validated_on_startup = False
+if "startup_validation_attempted" not in st.session_state:
+    st.session_state.startup_validation_attempted = False
+if "key_validation_failure" not in st.session_state:
+    st.session_state.key_validation_failure = None
+if "force_entered_without_verification" not in st.session_state:
+    st.session_state.force_entered_without_verification = False
 
-if LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup:
+if (LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup
+        and not st.session_state.force_entered_without_verification
+        and not st.session_state.startup_validation_attempted):
+    st.session_state.startup_validation_attempted = True
     with st.spinner("🔄 正在启动自检：验证 API Key 有效性..."):
         check_key = LLM_CONFIG["api_key"]
         check_url = LLM_CONFIG.get("base_url", "https://dashscope.aliyuncs.com/compatible-mode/v1")
@@ -105,11 +115,14 @@ if LLM_CONFIG.get("api_key") and not st.session_state.has_validated_on_startup:
         if is_valid:
             st.session_state.has_validated_on_startup = True
         else:
+            st.session_state.key_validation_failure = (check_key, msg)
             st.warning(f"⚠️ 启动自检：使用模型 **{check_model}** 验证未通过。\n\n**原因**: {msg}")
-            st.info("您的 API Key 可能仍然有效，只是所选模型无可用额度。请在下方选择其他模型重新验证，或重新输入 Key。")
+            st.info("您的 API Key 可能仍然有效，只是所选模型无可用额度。可在下方选择其他模型重新验证、重新输入 Key，或强行进入。")
             # 不再自动清空 Key，让用户有机会换模型重试
 
-if not LLM_CONFIG.get("api_key") or not st.session_state.get("has_validated_on_startup", True):
+if not LLM_CONFIG.get("api_key") or not (
+        st.session_state.has_validated_on_startup
+        or st.session_state.force_entered_without_verification):
     existing_key = LLM_CONFIG.get("api_key", "")
     if not st.session_state.get("has_validated_on_startup", True) and not existing_key:
          st.markdown("### 👋 欢迎使用")
@@ -169,7 +182,16 @@ if not LLM_CONFIG.get("api_key") or not st.session_state.get("has_validated_on_s
             else:
                 st.warning("请输入模型名称。")
 
-    if st.button("验证并保存", use_container_width=True, type="primary"):
+    failed_key = st.session_state.key_validation_failure
+    can_force_enter = (failed_key is not None and new_key == failed_key[0]
+                       and new_key.startswith("sk-"))
+    verify_column, force_column = st.columns([3, 1])
+    with verify_column:
+        verify_clicked = st.button("验证并保存", use_container_width=True, type="primary")
+    with force_column:
+        force_clicked = can_force_enter and st.button("强行进入", use_container_width=True)
+
+    if verify_clicked:
         key_to_check = new_key if new_key else existing_key
         if key_to_check and key_to_check.startswith("sk-"):
             st.info(f"正在使用模型 **{verify_model}** 验证 Key 的有效性...")
@@ -182,17 +204,30 @@ if not LLM_CONFIG.get("api_key") or not st.session_state.get("has_validated_on_s
                 _save_key(key_to_check)
                 set_key(".env", "LAST_VERIFY_MODEL", verify_model)
                 st.session_state.has_validated_on_startup = True
+                st.session_state.force_entered_without_verification = False
+                st.session_state.key_validation_failure = None
                 st.success("✅ API Key 验证通过并已保存！")
                 time.sleep(1)
                 st.rerun()
             else:
-                st.error(f"❌ 验证失败：{msg}")
-                st.markdown("👉 **请尝试选择其他模型重试，或检查 Key 是否正确、网络是否通畅。**")
+                st.session_state.key_validation_failure = (key_to_check, msg)
+                st.rerun()
         else:
             st.error("Key 格式不正确。它应该以 `sk-` 开头。")
 
+    if force_clicked:
+        _save_key(new_key)
+        st.session_state.force_entered_without_verification = True
+        st.rerun()
+
+    if can_force_enter:
+        st.error(f"❌ 验证失败：{failed_key[1]}")
+        st.markdown("👉 **您可以选择其他模型重试，或强行进入。强行进入后，依赖此 Key 的功能仍可能因认证或额度问题失败。**")
+
 else:
     st.markdown("上传您的视频、音频或文本文档，即可自动生成结构化笔记。")
+    if st.session_state.force_entered_without_verification:
+        st.warning("当前 API Key 未通过验证，调用模型时仍可能失败。")
 
     default_states = {
         "processing_started": False,
@@ -684,16 +719,8 @@ else:
         
         final_result_path = None
         
-        temp_root = "temp"
-        temp_dir = os.path.join(temp_root, "uploads")
-        if not os.path.exists(temp_dir):
-            os.makedirs(temp_dir)
-        temp_file_path = os.path.join(temp_dir, st.session_state.last_uploaded_filename)
-        
         try:
-            if not os.path.exists(temp_file_path):
-                with open(temp_file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+            temp_file_path = save_uploaded_file(uploaded_file)
         except Exception as e:
              st.error(f"无法访问临时文件: {e}。请重新上传。")
              st.session_state.processing_started = False
@@ -791,6 +818,7 @@ else:
                     cleanup_temp_file(temp_file_path)
                     st.rerun() 
         finally:
+            cleanup_temp_file(temp_file_path)
             if st.session_state.processing_started:
                  st.session_state.processing_started = False
                  stop_button_placeholder.empty()
@@ -1008,4 +1036,4 @@ else:
             st.session_state.refinement_stop_requested = False
             st.session_state.preset_feedback = "(请选择一个快捷指令)"
             st.session_state.custom_feedback = ""
-            st.rerun() 
+            st.rerun()

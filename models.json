@@ -6,7 +6,8 @@
         "deepseek-v3.2-exp",
         "qwen-flash",
         "qwen3.5-flash",
-        "deepseek-v4-flash"
+        "deepseek-v4-flash",
+        "qwen3-asr-flash"
     ],
     "vlm_models": [
         "qwen3-vl-plus",
