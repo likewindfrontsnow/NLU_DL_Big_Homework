@@ -3,27 +3,6 @@ from pptx import Presentation
 from pypdf import PdfReader
 from docx import Document
 
-SUPPORTED_DOCUMENT_EXTS = {'.txt', '.md', '.mdx', '.markdown', '.csv', '.pdf', '.pptx', '.docx'}
-
-
-def parse_document(input_path):
-    """解析主上传文档；拒绝不支持、损坏或没有可提取文字的文件。"""
-    extension = os.path.splitext(input_path)[1].lower()
-    if extension not in SUPPORTED_DOCUMENT_EXTS:
-        raise ValueError(f"不支持的文档格式: {extension}")
-    parser = {
-        '.pdf': extract_text_from_pdf,
-        '.pptx': extract_text_from_pptx,
-        '.docx': extract_text_from_docx,
-    }.get(extension, extract_text_from_plain)
-    with open(input_path, 'rb') as source:
-        text = parser(source)
-    if text.startswith(('[PDF解析错误:', '[PPTX解析错误:', '[DOCX解析错误:', '[文本解析错误:')):
-        raise ValueError(text)
-    if not text.strip():
-        raise ValueError("文档没有可提取的文字；扫描件请先进行 OCR。")
-    return text
-
 def extract_text_from_pptx(file_stream):
     text_content = []
     try:

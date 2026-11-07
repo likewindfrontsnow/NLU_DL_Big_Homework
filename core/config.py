@@ -1,17 +1,6 @@
 import os
 import json
-import copy
-import threading
 from dotenv import load_dotenv
-from dotenv import set_key
-
-_CONFIG_LOCK = threading.RLock()
-
-
-def save_environment(values):
-    with _CONFIG_LOCK:
-        for key, value in values.items():
-            set_key('.env', key, value)
 
 load_dotenv(override=True)
 
@@ -61,14 +50,14 @@ def load_models_config():
         try:
             with open(MODELS_CONFIG_PATH, "r", encoding="utf-8") as f:
                 config = json.load(f)
-                return copy.deepcopy({
+                return {
                     "llm_models": config.get("llm_models", DEFAULT_MODELS["llm_models"]),
                     "vlm_models": config.get("vlm_models", DEFAULT_MODELS["vlm_models"]),
                     "asr_models": config.get("asr_models", DEFAULT_MODELS["asr_models"]),
-                })
+                }
         except Exception:
-            return copy.deepcopy(DEFAULT_MODELS)
-    return copy.deepcopy(DEFAULT_MODELS)
+            return DEFAULT_MODELS
+    return DEFAULT_MODELS
 
 def save_models_config(config):
     try:
@@ -105,7 +94,6 @@ LLM_CONFIG = {
     "provider_name": LLM_PROVIDER_NAME,
     "base_url": LLM_BASE_URL,
     "api_key": LLM_API_KEY,
-    "asr_api_key": DASHSCOPE_API_KEY or LLM_API_KEY,
     "model": LLM_MODEL,
     "supported_llm": SUPPORTED_LLM,
     "supported_vlm": SUPPORTED_VLM,

@@ -1,7 +1,6 @@
 import subprocess
 import os
 import concurrent.futures
-from core.tasks import TaskCancelled, completed_futures, run_process
 
 class FrameExtractor:
     def _get_binary_path(self, binary_name: str) -> str:
@@ -14,7 +13,7 @@ class FrameExtractor:
         
         return binary_name
 
-    def get_video_duration(self, video_path: str, cancel_event=None) -> float:
+    def get_video_duration(self, video_path: str) -> float:
         if not os.path.exists(video_path):
             return 0.0
 
@@ -28,14 +27,19 @@ class FrameExtractor:
         ]
         
         try:
-            result = run_process(command, cancel_event=cancel_event)
+            result = subprocess.run(
+                command, 
+                check=True, 
+                capture_output=True, 
+                text=True, 
+                encoding='utf-8', 
+                errors='ignore'
+            )
             return float(result.stdout.strip())
-        except TaskCancelled:
-            raise
         except Exception:
             return 0.0
 
-    def _extract_single_frame_task(self, args, cancel_event=None):
+    def _extract_single_frame_task(self, args):
         ffmpeg_cmd, video_path, time_sec, output_path = args
         command = [
             ffmpeg_cmd,
@@ -48,14 +52,19 @@ class FrameExtractor:
         ]
         
         try:
-            run_process(command, cancel_event=cancel_event)
+            subprocess.run(
+                command, 
+                check=True, 
+                capture_output=True, 
+                text=True, 
+                encoding='utf-8', 
+                errors='ignore'
+            )
             return output_path
-        except TaskCancelled:
-            raise
         except Exception:
             return None
 
-    def extract_frames_generator(self, video_path: str, interval_seconds: int = 60, output_dir: str = "extracted_frames", max_workers: int = 12, cancel_event=None):
+    def extract_frames_generator(self, video_path: str, interval_seconds: int = 60, output_dir: str = "extracted_frames", max_workers: int = 12):
         if not os.path.exists(video_path):
             yield 'error', f"找不到视频文件: {video_path}"
             return
@@ -63,7 +72,7 @@ class FrameExtractor:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-        duration = self.get_video_duration(video_path, cancel_event)
+        duration = self.get_video_duration(video_path)
         if duration <= 0:
             yield 'error', "无法获取视频时长"
             return
@@ -89,9 +98,9 @@ class FrameExtractor:
         completed_count = 0
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_file = {executor.submit(self._extract_single_frame_task, task_args, cancel_event): task_args[3] for task_args in tasks}
+            future_to_file = {executor.submit(self._extract_single_frame_task, task_args): task_args[3] for task_args in tasks}
             
-            for future in completed_futures(future_to_file, cancel_event):
+            for future in concurrent.futures.as_completed(future_to_file):
                 completed_count += 1
                 out_path = future.result()
                 

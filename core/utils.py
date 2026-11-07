@@ -1,45 +1,32 @@
+import time
 import functools
-import threading
-import requests
-from core.tasks import check_cancelled
-
-
-class APIError(RuntimeError):
-    def __init__(self, status, code, message):
-        self.status_code = int(status or 0)
-        self.code = str(code or '')
-        super().__init__(f'API 错误 ({self.status_code}, {self.code}): {message}')
-
-
-def retryable(error):
-    if isinstance(error, (requests.Timeout, requests.ConnectionError)):
-        return True
-    response = getattr(error, 'response', None)
-    status = getattr(error, 'status_code', None)
-    if response is not None:
-        status = response.status_code
-    code = getattr(error, 'code', '').lower()
-    if any(word in code for word in ('arrearage', 'allocationquota', 'quotaexhausted', 'insufficient')):
-        return False
-    return status in (408, 429, 500, 502, 503, 504)
-
+import random
 
 def retry(max_retries=3, delay=2, backoff_factor=2, allowed_exceptions=()):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            cancel_event = kwargs.get('cancel_event')
-            for attempt in range(max_retries):
-                check_cancelled(cancel_event)
+            attempts = 0
+            current_delay = delay
+            
+            while attempts < max_retries:
                 try:
-                    result = func(*args, **kwargs)
-                    check_cancelled(cancel_event)
-                    return result
-                except Exception as error:
-                    if (attempt + 1 >= max_retries or not retryable(error)
-                            or (allowed_exceptions and not isinstance(error, allowed_exceptions))):
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if allowed_exceptions and not isinstance(e, allowed_exceptions):
                         raise
-                    (cancel_event or threading.Event()).wait(delay * backoff_factor ** attempt)
-                    check_cancelled(cancel_event)
+
+                    attempts += 1
+                    if attempts >= max_retries:
+                        raise e
+                    
+                    error_str = str(e).lower()
+                    if "429" in error_str or "quota" in error_str:
+                        sleep_time = current_delay * (0.5 + random.random())
+                    else:
+                        sleep_time = current_delay
+                    
+                    time.sleep(sleep_time)
+                    current_delay *= backoff_factor 
         return wrapper
     return decorator

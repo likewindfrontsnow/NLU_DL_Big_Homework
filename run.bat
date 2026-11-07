@@ -56,7 +56,7 @@ if not exist "requirements.txt" goto :CheckBin
 echo.
 echo ========================================================
 echo [2/3] Installing dependencies...
-echo       (Please wait, installing Python dependencies)
+echo       (Please wait, downloading AI models may take time)
 echo ========================================================
 echo.
 

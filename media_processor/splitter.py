@@ -2,14 +2,14 @@ import subprocess
 import os
 import math
 import concurrent.futures
-from core.tasks import TaskCancelled, check_cancelled, completed_futures, run_process
+from core.utils import retry
 
 def _get_binary_path(binary_name: str) -> str:
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     local_bin = os.path.join(base_dir, "bin", f"{binary_name}.exe")
     return local_bin if os.path.exists(local_bin) else binary_name
 
-def get_media_duration(media_path: str, cancel_event=None) -> float | None:
+def get_media_duration(media_path: str) -> float | None:
     ffprobe_cmd = _get_binary_path("ffprobe")
     command = [
         ffprobe_cmd, 
@@ -19,15 +19,14 @@ def get_media_duration(media_path: str, cancel_event=None) -> float | None:
         media_path
     ]
     try:
-        result = run_process(command, cancel_event=cancel_event)
+        result = subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return float(result.stdout)
-    except TaskCancelled:
-        raise
     except Exception as e:
         print(f"获取媒体时长失败: {e}")
         return None
 
-def _process_chunk(args, cancel_event=None) -> str | None:
+@retry(max_retries=3, delay=2, allowed_exceptions=(subprocess.CalledProcessError,))
+def _process_chunk(args) -> str | None:
     media_path, output_dir, chunk_duration, i, num_chunks = args
     start_time = i * chunk_duration
     output_filename = os.path.join(output_dir, f"chunk_{i+1:03d}.mp3")
@@ -42,13 +41,13 @@ def _process_chunk(args, cancel_event=None) -> str | None:
     ]
     
     try:
-        run_process(command, cancel_event=cancel_event)
+        subprocess.run(command, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         return output_filename
     except subprocess.CalledProcessError as e:
         print(f"处理音频块 {i+1} 失败: {e.stderr}")
         raise e
 
-def split_media_to_audio_chunks_generator(media_path: str, output_dir: str, chunk_duration: int = 170, cancel_event=None):
+def split_media_to_audio_chunks_generator(media_path: str, output_dir: str, chunk_duration: int = 600):
     if not os.path.exists(media_path):
         yield 'error', f"媒体文件不存在: {media_path}", None
         return
@@ -59,7 +58,7 @@ def split_media_to_audio_chunks_generator(media_path: str, output_dir: str, chun
         yield 'error', f"创建输出目录失败: {e}", None
         return
 
-    duration = get_media_duration(media_path, cancel_event)
+    duration = get_media_duration(media_path)
     if not duration:
         yield 'error', "无法获取媒体时长", None
         return
@@ -76,18 +75,14 @@ def split_media_to_audio_chunks_generator(media_path: str, output_dir: str, chun
     max_workers = min(os.cpu_count() or 1, 8)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_args = {executor.submit(_process_chunk, args, cancel_event): args for args in tasks_args}
+        future_to_args = {executor.submit(_process_chunk, args): args for args in tasks_args}
         
-        for future in completed_futures(future_to_args, cancel_event):
+        for future in concurrent.futures.as_completed(future_to_args):
             try:
                 result = future.result()
                 if result:
                     output_files.append(result)
-            except TaskCancelled:
-                raise
             except Exception as e:
-                for pending in future_to_args:
-                    pending.cancel()
                 yield 'error', f"音频块处理失败: {e}", None
                 executor.shutdown(wait=False, cancel_futures=True)
                 return
